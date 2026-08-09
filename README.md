@@ -283,5 +283,5 @@ where Lua differs:
 - **config as a Lua file** rather than TOML.
 
 > Note on licensing: the Python original is AGPLv3. No code was copied, but the
-> code numbering and flag names are deliberately familiar. No licence has been
-> chosen for this repository yet — that is a decision for its owner.
+> code numbering and flag names are deliberately familiar. This repository is
+> MIT licensed; see `LICENSE`.

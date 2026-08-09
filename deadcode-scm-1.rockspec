@@ -19,9 +19,7 @@ description = {
     Zero runtime dependencies, not even LuaFileSystem.
   ]],
   homepage = "https://github.com/ColinKennedy/lua-deadcode",
-  -- TODO: no licence has been chosen for this repository yet. Add `license`
-  -- here (and a LICENSE file) before the first upload; a rock on luarocks.org
-  -- with no stated terms is one nobody can safely depend on.
+  license = "MIT",
 }
 
 dependencies = {
