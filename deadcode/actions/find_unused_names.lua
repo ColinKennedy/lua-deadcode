@@ -10,6 +10,48 @@ local CodeItem = require('deadcode.code_item')
 local constants = require('deadcode.constants')
 local ignore = require('deadcode.ignore')
 local noqa = require('deadcode.noqa')
+local tach = require('deadcode.tach')
+
+--- Read the project's `tach.lua`, if it has one and was not told not to.
+--
+-- A missing file at the default location is not a problem: most projects have
+-- no `tach.lua`. A missing file at a location the user named is, because they
+-- asked for it by name.
+---@param args deadcode.Args
+---@param fs deadcode.FS
+---@return deadcode.Surface surface empty when there is nothing to read
+---@return string|nil path the file that was read, so it is not itself reported
+---@return string[] diagnostics
+local function read_tach(args, fs)
+  if args.no_tach then return tach.empty(), nil, {} end
+
+  -- Normalised, because the path is compared against the discovered file list
+  -- later to keep the configuration out of its own report.
+  local path = fs.normalise(args.tach or tach.FILENAME)
+  local source = fs.read_file(path)
+
+  if not source then
+    if args.tach then
+      return tach.empty(), nil, { string.format('Error: %s could not be found', path) }
+    end
+    return tach.empty(), nil, {}
+  end
+
+  local surface, problems = tach.load(source, path)
+  if not surface then
+    ---@cast problems string[] set exactly when the surface is not
+    local diagnostics = {}
+    for i = 1, #problems do
+      diagnostics[i] = 'Error: ' .. problems[i]
+    end
+    return tach.empty(), path, diagnostics
+  end
+
+  if args.verbose then
+    return surface, path, { string.format('Reading declared interfaces from %s', path) }
+  end
+  return surface, path, {}
+end
 
 --- Analyse every file and return what is left unused.
 ---@param filenames string[]
@@ -18,13 +60,17 @@ local noqa = require('deadcode.noqa')
 ---@return deadcode.CodeItem[] items sorted by `CodeItem.compare`
 ---@return string[] diagnostics messages for the user; `Error:` prefixed ones
 --- are fatal to the exit status but never to the run
+---@return string|nil tach_path the declaration file that was read, so the
+--- reporter knows whether the project has one yet
 -- One module, one verb, one exported function - so there is no module table to
 -- read fields off, and nothing here to narrow.
 return function(filenames, args, fs)
   local program = Resolver.new_program()
   local directives_by_file = {}
   local muted_files = {}
-  local diagnostics = {}
+  local module_names = {}
+
+  local surface, tach_path, diagnostics = read_tach(args, fs)
 
   for _, file in ipairs(filenames) do
     local content, read_err = fs.read_file(file)
@@ -44,6 +90,9 @@ return function(filenames, args, fs)
         local directives = noqa.parse(comments)
         directives_by_file[file] = directives
 
+        local module_name = tach.module_name(file, surface.source_roots)
+        module_names[file] = module_name
+
         -- `ignore-file` mutes reporting but the file is still analysed, so the
         -- names it uses keep the rest of the codebase honest. This is the
         -- deliberate difference from `--exclude`, which skips reading entirely.
@@ -53,6 +102,18 @@ return function(filenames, args, fs)
             diagnostics[#diagnostics + 1] =
               string.format('Muted by ignore-file directive: %s', file)
           end
+        elseif tach.is_unchecked(surface, module_name) then
+          -- The same treatment, for the same reason, asked for in tach's words.
+          muted_files[file] = true
+          if args.verbose then
+            diagnostics[#diagnostics + 1] =
+              string.format('Muted by an unchecked tach module: %s', file)
+          end
+        elseif file == tach_path then
+          -- The configuration is not part of the program it configures, and
+          -- reporting on the file that was just read would be absurd. Muted
+          -- rather than skipped, so a name it mentions still counts as used.
+          muted_files[file] = true
         end
 
         Resolver.analyse(program, chunk, file, args)
@@ -64,15 +125,22 @@ return function(filenames, args, fs)
   for _, code in ipairs(args.ignore_codes) do
     ignored_codes[code] = true
   end
+  for code in pairs(surface.disabled_codes) do
+    ignored_codes[code] = true
+  end
 
   local items = {}
   for _, raw in ipairs(Resolver.collect(program, args)) do
+    -- The resolver works in paths; a declaration works in module names. The
+    -- raw finding is this pass's own table, so it is where the two are joined.
+    raw.module = module_names[raw.file]
     local item = CodeItem.new(raw)
 
     local skip = muted_files[item.file]
       or ignored_codes[item.code]
       or ignore.by_kind(item, raw)
       or ignore.by_config(item, args)
+      or tach.exposes(surface, item, item.module)
       or noqa.is_ignored(directives_by_file[item.file], item.line, item.code)
 
     if not skip and #args.only > 0 then skip = not ignore.matches_path(item.file, args.only) end
@@ -93,6 +161,7 @@ return function(filenames, args, fs)
           name = unused.code or '',
           type = 'unused_ignore',
           file = file,
+          module = module_names[file],
           line = unused.line,
           col = unused.col,
           message = not unused.code and constants.UNUSED_IGNORE_MESSAGE or nil,
@@ -113,5 +182,5 @@ return function(filenames, args, fs)
   end
 
   table.sort(items, CodeItem.compare)
-  return items, diagnostics
+  return items, diagnostics, tach_path
 end

@@ -45,7 +45,7 @@
 ---@field EXACT_TYPES table<deadcode.FindingType, boolean>
 local constants = {}
 
-constants.VERSION = '0.1.0'
+constants.VERSION = '0.2.0'
 
 -- `exact = true` marks kinds resolved by lexical scoping rather than by
 -- matching bare names, which cannot be confused by a name collision.

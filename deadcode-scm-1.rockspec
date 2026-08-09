@@ -41,7 +41,9 @@ build = {
     ["deadcode.lexer"] = "deadcode/lexer.lua",
     ["deadcode.noqa"] = "deadcode/noqa.lua",
     ["deadcode.parser"] = "deadcode/parser.lua",
+    ["deadcode.patterns"] = "deadcode/patterns.lua",
     ["deadcode.resolver"] = "deadcode/resolver.lua",
+    ["deadcode.tach"] = "deadcode/tach.lua",
   },
   install = {
     bin = {

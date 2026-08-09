@@ -61,7 +61,7 @@ function cli.main(argv, deps)
   if #args.paths == 0 then return 'Error: no paths given\n\n' .. Args.USAGE, EXIT_ERROR end
 
   local files, discovery_diagnostics = find_lua_files(args, fs)
-  local items, analysis_diagnostics = find_unused_names(files, args, fs)
+  local items, analysis_diagnostics, tach_path = find_unused_names(files, args, fs)
 
   local diagnostics = {}
   local had_error = false
@@ -81,6 +81,13 @@ function cli.main(argv, deps)
 
   local body = report.build(items, args)
   if body then chunks[#chunks + 1] = body end
+
+  -- Only for a project that has not answered the question yet. Once a
+  -- `tach.lua` exists the syntax is known, and repeating it every run is noise.
+  if body and not tach_path then
+    local hint = report.interface_hint(items, args)
+    if hint then chunks[#chunks + 1] = hint end
+  end
 
   if #items == 0 and not had_error then
     local clear = report.all_clear(args)
