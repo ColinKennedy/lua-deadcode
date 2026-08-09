@@ -55,7 +55,7 @@ pre-commit hook.
 | `DC02` | unused-function       | `local function f` that is never called |
 | `DC03` | unused-global         | a global this codebase assigns but never reads |
 | `DC04` | unused-method         | `function T:m()` never invoked |
-| `DC05` | unused-field          | `function T.f()`, `T.f = ...`, `local T = { f = ... }` |
+| `DC05` | unused-field          | `function T.f()`, `T.f = ...`, `local T = { f = ... }`, where `T` is a table this codebase owns |
 | `DC06` | unused-parameter      | a parameter never read (opt-in, `--check-params`) |
 | `DC07` | unused-require        | `local m = require "x"` where `m` is never used |
 | `DC08` | unused-loop-variable  | a `for` control variable never read |
@@ -90,6 +90,34 @@ resolved without type inference, so every `foo` field in the codebase shares one
 bucket and a use of any marks all of them used. That under-reports; it never
 over-reports. Analysis is whole-program, so a field defined in one module and
 only read from another is correctly live.
+
+**A field finding is only ever made about a table this codebase owns.** Writing
+`t.k = v` says nothing about `k` unless `t` is a table built here and still kept
+here — otherwise the reader lives somewhere this tool cannot look, and calling
+the field dead is a claim about *their* code:
+
+```lua
+local M = {}
+M.helper = function() end        -- ours: reported if nothing calls it
+
+vim.opt_local.number = false     -- the editor reads these back
+vim.bo[buffer].bufhidden = "wipe"
+local other = require("other")
+other.extra = 1                  -- not our table to reason about
+
+local opts = { silent = true }   -- ours, until it is handed over...
+vim.keymap.set("n", "x", print, opts)   -- ...and now the callee reads it
+
+local STEPS = { next = 1 }
+return STEPS[direction]          -- a computed key can name any field
+```
+
+A table stops being provable the moment it is passed to a call, stored in a
+table we do not own, or read with a computed key. `setmetatable(M, mt)` is
+excluded: it hands the table to the VM, not to a reader, and the class idiom
+depends on it. *Writing through* a global counts as foreign, because nothing
+distinguishes a global table of yours from `vim` or `string` — though a
+constructor you can see (`config = { verbose = true }`) is still yours.
 
 Truthiness follows Lua, not intuition borrowed from other languages: only `nil`
 and `false` are falsy, so `if 0 then` and `if "" then` are live branches.
@@ -163,8 +191,13 @@ eventually ignore.
 - **Mutual recursion is invisible.** `a` calls `b`, `b` calls `a`, nothing calls
   either — both look used. Direct self-recursion *is* caught.
 - **Dynamic access defeats it in both directions.** `t[key]` with a computed key
-  is neither a use nor a definition. Dispatch tables, `_G`, `setmetatable`
-  trickery and `load()` are all invisible. A literal `t["name"]` *is* understood.
+  is neither a use nor a definition — and it retires every finding about `t`,
+  since a computed key could name any of them. `_G`, `setmetatable` trickery and
+  `load()` are equally invisible. A literal `t["name"]` *is* understood.
+- **A table you hand over is a table you stop hearing about.** Passing it to a
+  call or storing it in a table you do not own withdraws its field findings, and
+  no attempt is made to see whether the callee actually reads anything. Dead
+  fields on your options tables will not be found.
 - **A table only ever written to looks live**, because writing `t.a.b = 1` reads
   `t.a` on the way.
 - **Removing dead code can reveal more.** Nothing chases that cascade; run the
@@ -179,7 +212,7 @@ eventually ignore.
 
 ```sh
 make check      # test suite + self-check
-make test       # 129 tests, no dependencies
+make test       # 146 tests, no dependencies
 make test-jit   # the same suite under LuaJIT
 make deadcode   # run the tool against its own source
 
