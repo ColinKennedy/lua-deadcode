@@ -100,8 +100,6 @@ end
 
 --- Print the result of `main` and return the exit code.
 --
--- `bin/deadcode` is the only caller, and it has no `.lua` extension, so a
--- source scanner walking the tree never sees the read.
 ---@param argv string[]|nil
 ---@return integer exit_code
 function cli.run(argv) -- privata: ignore
