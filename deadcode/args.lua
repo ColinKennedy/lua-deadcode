@@ -30,6 +30,8 @@ local constants = require('deadcode.constants')
 ---@field help boolean
 ---@field config string|nil an explicit config path, if `--config` was given
 ---@field no_config boolean
+---@field tach string|nil an explicit `tach.lua` path, if `--tach` was given
+---@field no_tach boolean
 ---@field _explicit table<string, boolean> which options the command line set;
 --- consulted so that a flag on the command line beats the same flag in the
 --- config file
@@ -58,11 +60,20 @@ local LIST_OPTIONS = {
 local FLAG_OPTIONS = {
   check_params = true,
   no_color = true,
+  no_config = true,
+  no_tach = true,
   quiet = true,
   count = true,
   verbose = true,
   version = true,
   help = true,
+}
+
+--- Options that name a file. Parsed like a list option takes one value, but
+--- kept out of `LIST_OPTIONS` so a second one replaces rather than appends.
+local PATH_OPTIONS = {
+  config = true,
+  tach = true,
 }
 
 Args.USAGE = [[
@@ -82,6 +93,8 @@ Options:
   --no-color                         Disable ANSI colour.
   --config <path>                    Use this config file instead of .deadcoderc.
   --no-config                        Ignore .deadcoderc entirely.
+  --tach <path>                      Use this tach file instead of tach.lua.
+  --no-tach                          Ignore tach.lua entirely.
   -v, --verbose                      Explain what is being skipped and why.
   --version                          Print the version.
   -h, --help                         Print this message.
@@ -121,6 +134,8 @@ local function new_defaults()
     help = false,
     config = nil,
     no_config = false,
+    tach = nil,
+    no_tach = false,
   }
 end
 
@@ -179,23 +194,19 @@ function Args._parse(argv)
         args[key] = true
         explicit[key] = true
         index = index + 1
-      elseif key == 'no_config' then
-        args.no_config = true
-        explicit.no_config = true
-        index = index + 1
-      elseif key == 'config' then
+      elseif PATH_OPTIONS[key] then
         if inline then
-          args.config = inline
+          args[key] = inline
           index = index + 1
         else
           local value = argv[index + 1]
           if not value or value:sub(1, 2) == '--' then
-            return nil, 'option --config requires a value'
+            return nil, string.format('option --%s requires a value', name)
           end
-          args.config = value
+          args[key] = value
           index = index + 2
         end
-        explicit.config = true
+        explicit[key] = true
       elseif LIST_OPTIONS[key] then
         explicit[key] = true
         if inline then
@@ -226,6 +237,28 @@ function Args._parse(argv)
   return args
 end
 
+--- Evaluate Lua source that exists to return a table of settings.
+--
+-- Shared with `tach.lua`, so that both configuration files this tool reads
+-- behave identically: both are Lua rather than a second data language, and both
+-- are run. Running them is the deliberate trade `.deadcoderc` already made, in
+-- exchange for a config that can compute; scanning a checkout therefore
+-- executes what its configuration says.
+---@param source string
+---@param path string used in the chunk name and in error messages
+---@return table<string, any>|nil data nil when the source is not usable
+---@return string|nil err set only when `data` is nil
+function Args.load_table(source, path)
+  local chunk, err = compile(source, '@' .. path)
+  if not chunk then return nil, string.format('could not parse %s: %s', path, err) end
+
+  -- The config is user code; a bad one must not take the whole run down.
+  local ok, result = pcall(chunk)
+  if not ok then return nil, string.format('could not evaluate %s: %s', path, tostring(result)) end
+  if type(result) ~= 'table' then return nil, string.format('%s must return a table', path) end
+  return result
+end
+
 --- Load `.deadcoderc` (a Lua chunk returning a table).
 -- Returns `config, err`. A missing file is not an error: `nil, nil`.
 ---@param path string
@@ -237,14 +270,7 @@ function Args._load_config(path)
   local source = handle:read('*a')
   handle:close()
 
-  local chunk, err = compile(source, '@' .. path)
-  if not chunk then return nil, string.format('could not parse %s: %s', path, err) end
-
-  -- The config is user code; a bad one must not take the whole run down.
-  local ok, result = pcall(chunk)
-  if not ok then return nil, string.format('could not evaluate %s: %s', path, tostring(result)) end
-  if type(result) ~= 'table' then return nil, string.format('%s must return a table', path) end
-  return result
+  return Args.load_table(source, path)
 end
 
 --- Fold config-file values into parsed CLI args.

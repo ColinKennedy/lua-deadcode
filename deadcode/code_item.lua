@@ -12,6 +12,8 @@ local constants = require('deadcode.constants')
 ---@field type deadcode.FindingType
 ---@field code string the `DCxx` code derived from `type`
 ---@field file string path as the user typed it
+---@field module string the dotted module name `file` denotes, which is how a
+--- `tach.lua` refers to it
 ---@field line integer 1-based; 0 when the finding has no position
 ---@field col integer 1-based; 0 when the finding has no position
 ---@field message string|nil overrides the template for `type` when set
@@ -25,6 +27,8 @@ CodeItem.__index = CodeItem
 ---@field name string
 ---@field type deadcode.FindingType
 ---@field file string
+---@field module string|nil defaults to `file`, for a caller with no interest
+--- in module names
 ---@field line integer|nil defaults to 0
 ---@field col integer|nil defaults to 0
 ---@field message string|nil
@@ -41,6 +45,7 @@ function CodeItem.new(opts)
     type = opts.type,
     code = code,
     file = opts.file,
+    module = opts.module or opts.file,
     line = opts.line or 0,
     col = opts.col or 0,
     message = opts.message,

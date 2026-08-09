@@ -242,6 +242,109 @@ line. Boolean options apply only where the command line stayed silent, so an
 explicit flag always wins. `--no-config` skips the file; `--config <path>` picks
 a different one.
 
+## Declaring a public interface: `tach.lua`
+
+Reachability is inferred from what the checkout itself uses. That is exactly
+right for an application and exactly wrong for a library: its callers are
+somewhere else by definition, so its whole API looks dead.
+
+The answer is to declare the API, and
+[tach](https://github.com/gauge-sh/tach) already has the vocabulary for one. If
+a `tach.lua` sits in the working directory it is read, and anything it exposes
+is not dead code.
+
+A report that turns up names a declaration could cover says so, with those
+names already filled in — paste it and the run is clean:
+
+```
+$ deadcode lua
+lua/mylib/init.lua:2:12: DC05 Field `setup` is never used
+lua/mylib/init.lua:3:12: DC05 Field `teardown` is never used
+lua/other.lua:2:12: DC05 Field `render` is never used
+
+Some of these may be public API this scan cannot see a caller for. To declare
+them public rather than delete them, add a tach.lua beside your source:
+
+  -- tach.lua
+  return {
+    interfaces = {
+      { expose = { 'setup', 'teardown' }, from = { 'lua\\.mylib' } },
+      { expose = { 'render' }, from = { 'lua\\.other' } },
+    },
+  }
+
+`expose` names the symbols and `from` names the modules that publish them.
+Both are regular expressions matching the whole name, and leaving `from` out
+means every module. Anything a declaration covers is never reported again.
+```
+
+The suggestion is capped at a few entries, and says how many names it left out
+rather than looking complete when it is not. It stops once the project has a
+`tach.lua`, and `--no-tach` silences it outright.
+
+The full shape, hand-written:
+
+```lua
+-- tach.lua
+return {
+  source_roots = { 'lua' },
+
+  interfaces = {
+    { expose = { 'setup', 'on_.*' }, from = { 'mylib' } },
+  },
+
+  modules = {
+    { path = 'mylib.vendored', unchecked = true },
+  },
+}
+```
+
+`tach.lua` is `tach.toml`'s schema written as a Lua table — the same keys, the
+same values, the same defaults — so a project already using tach can convert
+its config once and both tools read it. Every key tach accepts is accepted
+here, and an unknown one is refused, because a misspelled key is a rule that
+silently is not applied.
+
+What is acted on:
+
+| Key | What it does here |
+|-----|-------------------|
+| `interfaces[].expose` | regexes naming symbols that are public, so never dead |
+| `interfaces[].from` | regexes naming the modules that publish them; omitted means every module |
+| `modules[].unchecked` | nothing in the module is reported, though it is still read |
+| `source_roots` | what a file's module name is relative to; defaults to `{ '.' }` |
+| `rules.unused_ignore_directives = 'off'` | disables `DC13` — tach's name for the same check |
+
+`expose` and `from` are **regular expressions**, anchored at both ends, and both
+halves of an entry must match: `{ expose = { 'setup' } }` says every module's
+`setup` is public, while `{ expose = { '.*' }, from = { 'mylib' } }` says all of
+`mylib` is. Constructs Lua patterns cannot express — alternation, groups,
+repetition counts — are refused rather than approximated, because a pattern that
+quietly matches something other than what it says is worse than one that will
+not load. `modules[].path` is a dotted glob instead, where `**` crosses the
+separator: `vendor.**` covers `vendor` and everything under it.
+
+> **Double your backslashes.** These patterns live in a Lua file, so a regex
+> `\.` has to be written `'\\.'` — Lua 5.2 and newer reject `'\.'` outright as
+> an invalid escape, and Lua 5.1 silently reads it as a bare `.`, which matches
+> any character. `'libs\\..*'` is the whole of `libs.anything`.
+
+A declaration only ever vouches for names another file could reach: functions,
+methods, fields and globals. It cannot make a local, a parameter, a loop
+variable, a label or an unreachable branch live, since nothing outside the file
+can reach those — and a declaration that could silence them would be a way to
+switch the tool off by accident.
+
+`--no-tach` skips the file; `--tach <path>` picks a different one.
+
+Everything else in the schema describes which module may import which. That is
+tach's question, and it is validated and then ignored here — with one deliberate
+exception. **`exclude` is not honoured.** `--exclude` in this tool means "do not
+read", which withdraws every usage in the excluded path and can make live code
+look dead; inheriting a list written for a tool that only ever reads imports
+would spring that trap silently. Pass `--exclude` yourself if that is what you
+want.
+
 ## Known limitations
 
 Stated plainly, because a linter you cannot calibrate is a linter you will
@@ -273,7 +376,7 @@ eventually ignore.
 
 ```sh
 make check      # test suite + self-check
-make test       # 158 tests, no dependencies
+make test       # 200 tests, no dependencies
 make test-jit   # the same suite under LuaJIT
 make deadcode   # run the tool against its own source
 
@@ -305,6 +408,8 @@ deadcode/noqa.lua         inline directive parsing, and whether each one worked
 deadcode/constants.lua    codes and messages, one source of truth
 deadcode/code_item.lua    a single finding
 deadcode/args.lua         CLI and .deadcoderc
+deadcode/tach.lua         tach.lua: the declared public interface
+deadcode/patterns.lua     tach's regexes and globs, as Lua patterns
 deadcode/fs.lua           the only module that touches disk
 deadcode/actions/         one module per pipeline step
 deadcode/cli.lua          main()
