@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+
+jobs:
+  test:
+    name: Lua ${{ matrix.lua }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The tool claims to run anywhere Lua does, so it is tested everywhere
+        # Lua is. The parser accepts a superset of all of these dialects.
+        lua: ["5.1", "5.2", "5.3", "5.4", "luajit"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # v11 or newer is required for `luajit`: up to v10 the action fetched
+      # LuaJIT from luajit.org, which stopped publishing the 2.1 beta tarball,
+      # so the job died on a 404 before running a single test.
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: ${{ matrix.lua }}
+
+      # The suite is dependency-free on purpose, so there is nothing to install
+      # before this: a bare interpreter and the checkout are the whole setup.
+      - name: Run the test suite
+        run: make test
+
+      # Dogfooding. A tool that cannot survive its own analysis is not finished.
+      - name: Run deadcode on itself
+        run: make deadcode
+
+  rockspec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+
+      # v6 defaults to LuaRocks 3.13; older pins cannot install anything under
+      # LuaJIT any more.
+      - uses: leafo/gh-actions-luarocks@v6
+
+      # A rockspec that stops matching the tree is only ever discovered at
+      # release time otherwise, when it is most expensive to fix.
+      - name: Verify the rockspec installs
+        run: luarocks make --local deadcode-scm-1.rockspec
+
+      - name: Verify the installed command runs
+        run: |
+          eval "$(luarocks path --bin)"
+          deadcode --version
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v6
+
+      - run: luarocks install luacheck
+      - run: make luacheck
+
+      - run: luarocks install privata
+      - name: Report public names only used privately
+        run: make privata
+
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          # Kept in step with LUA_SOURCES in the Makefile. `bin/deadcode` is
+          # named without an extension, so stylua will not find it by walking
+          # `bin` and has to be pointed at it.
+          args: --check deadcode bin/deadcode tests
+
+  llscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+
+      - uses: leafo/gh-actions-luarocks@v6
+
+      # llscheck drives lua-language-server, which is a separate binary.
+      - uses: jdx/mise-action@v2
+        with:
+          tool_versions: |
+            lua-language-server latest
+
+      - run: luarocks install llscheck
+      - run: make llscheck
