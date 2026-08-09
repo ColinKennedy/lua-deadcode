@@ -1,0 +1,20 @@
+{
+    "runtime.version": "Lua 5.1",
+    "diagnostics.libraryFiles": "Disable",
+    "diagnostics": {
+        "neededFileStatus": {
+            "incomplete-signature-doc": "Any",
+            "missing-global-doc": "Any",
+            "missing-local-export-doc": "Any"
+        },
+        "severity": {
+            "incomplete-signature-doc": "Error",
+            "missing-global-doc": "Error",
+            "missing-local-export-doc": "Error"
+        }
+    },
+    "workspace.checkThirdParty": "Disable",
+    "workspace.ignoreDir": [
+        "examples"
+    ]
+}

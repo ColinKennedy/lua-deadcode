@@ -1,0 +1,15 @@
+#!/usr/bin/env lua
+-- Command-line wrapper. Resolves the package relative to this script so the
+-- tool runs from a checkout without being installed.
+
+local script = arg and arg[0] or 'bin/deadcode'
+local script_dir = script:match('^(.*)[/\\][^/\\]+$') or '.'
+package.path = script_dir .. '/../?.lua;' .. script_dir .. '/../?/init.lua;' .. package.path
+
+local ok, cli = pcall(require, 'deadcode.cli')
+if not ok then
+  io.stderr:write('Error: could not load deadcode (', tostring(cli), ')\n')
+  os.exit(2)
+end
+
+os.exit(cli.run(arg))
