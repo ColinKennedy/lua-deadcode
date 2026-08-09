@@ -41,6 +41,12 @@ local Args = {}
 
 local CONFIG_FILENAME = '.deadcoderc'
 
+-- `loadstring` compiles a string on 5.1 and LuaJIT; 5.2 removed it and handed
+-- the job to `load`. Whichever one exists here takes `(source, chunkname)`, so
+-- this single name covers every dialect the tool runs on. (5.1's own `load`
+-- would not: it wants a reader function.)
+local compile = loadstring or load
+
 local LIST_OPTIONS = {
   exclude = true,
   only = true,
@@ -231,7 +237,7 @@ function Args._load_config(path)
   local source = handle:read('*a')
   handle:close()
 
-  local chunk, err = loadstring(source, '@' .. path)
+  local chunk, err = compile(source, '@' .. path)
   if not chunk then return nil, string.format('could not parse %s: %s', path, err) end
 
   -- The config is user code; a bad one must not take the whole run down.
