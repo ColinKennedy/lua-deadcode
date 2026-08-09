@@ -102,7 +102,7 @@ end
 --
 ---@param argv string[]|nil
 ---@return integer exit_code
-function cli.run(argv) -- privata: ignore
+function cli.run(argv)
   local output, exit_code = cli.main(argv)
   if output and output ~= '' then io.stdout:write(output, '\n') end
   return exit_code

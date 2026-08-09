@@ -53,14 +53,14 @@ end
 -- Reached as `item:position()` on an instance, never as `CodeItem.position`,
 -- which is invisible to a scanner that matches reads by receiver.
 ---@return string
-function CodeItem:position() -- privata: ignore
+function CodeItem:position()
   return string.format('%s:%d:%d:', self.file, self.line, self.col)
 end
 
 --- The human-readable sentence describing this finding.
 -- Reached as `item:text()`; see the note on `position`.
 ---@return string
-function CodeItem:text() -- privata: ignore
+function CodeItem:text()
   if self.message then return self.message end
   local template = constants.MESSAGE_FOR_TYPE[self.type]
   if self.type == 'empty_file' then return template end

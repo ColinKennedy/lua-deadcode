@@ -15,7 +15,7 @@ local ignore = require('deadcode.ignore')
 --- are fatal to the exit status but never to the run
 -- One module, one verb, one exported function - so there is no module table to
 -- read fields off, and nothing here to narrow.
-return function(args, fs) -- privata: ignore
+return function(args, fs)
   local files, diagnostics, seen = {}, {}, {}
 
   for _, raw_path in ipairs(args.paths) do
