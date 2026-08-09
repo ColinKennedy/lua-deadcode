@@ -20,13 +20,25 @@
 -- `-- luacheck: ignore` is always treated as line-scoped here. That can leave
 -- a finding unsuppressed, never the reverse. Use `ignore-file` for a whole file.
 
+--- Every inline directive found in one file, indexed by the line it governs.
+---@class deadcode.Directives
+---@field all table<integer, boolean> lines where every code is suppressed
+---@field by_code table<string, table<integer, boolean>> code -> suppressed lines
+---@field ignore_file boolean true when the whole file is muted
+
+--- Inline suppression directives.
+---@class deadcode.noqa
 local noqa = {}
 
+---@param set table<integer, boolean>
+---@param line integer
 local function add(set, line)
   set[line] = true
 end
 
 --- Build a directive index from the comment list the lexer produced.
+---@param comments deadcode.Comment[]|nil
+---@return deadcode.Directives empty but usable when `comments` is nil
 function noqa.parse(comments)
   local directives = { all = {}, by_code = {}, ignore_file = false }
   if not comments then return directives end
@@ -65,6 +77,10 @@ function noqa.parse(comments)
 end
 
 --- Is a finding with `code` on `line` suppressed by a directive?
+---@param directives deadcode.Directives|nil nil for a file that was never parsed
+---@param line integer
+---@param code string a `DCxx` code
+---@return boolean
 function noqa.is_ignored(directives, line, code)
   if not directives then return false end
   if directives.all[line] then return true end

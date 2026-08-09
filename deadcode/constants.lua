@@ -10,6 +10,37 @@
 -- literal keys and read by dynamic lookup looks exactly like dead code from
 -- the outside, because that is all a static reader can see.
 
+--- The kind of thing a finding is about. Every value here has a row in
+--- `constants.CODES`, and the two must stay in step.
+---@alias deadcode.FindingType
+---| '"variable"'
+---| '"function"'
+---| '"global"'
+---| '"method"'
+---| '"field"'
+---| '"parameter"'
+---| '"require"'
+---| '"loop_variable"'
+---| '"unreachable"'
+---| '"dead_branch"'
+---| '"empty_file"'
+---| '"label"'
+
+--- One row of the code table: a finding kind and everything derived from it.
+---@class deadcode.CodeSpec
+---@field type deadcode.FindingType the kind this row describes
+---@field code string the stable `DCxx` identifier
+---@field name string the human-readable rule name, as used in configuration
+---@field exact boolean|nil true when lexical scoping resolved the name
+---@field message string `string.format` template taking the name, if any
+
+--- Finding kinds and the lookup tables derived from them.
+---@class deadcode.constants
+---@field VERSION string
+---@field CODES deadcode.CodeSpec[]
+---@field TYPE_TO_CODE table<deadcode.FindingType, string>
+---@field MESSAGE_FOR_TYPE table<deadcode.FindingType, string>
+---@field EXACT_TYPES table<deadcode.FindingType, boolean>
 local constants = {}
 
 constants.VERSION = '0.1.0'

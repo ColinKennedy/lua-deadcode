@@ -11,20 +11,35 @@ local find_lua_files = require('deadcode.actions.find_lua_files')
 local find_unused_names = require('deadcode.actions.find_unused_names')
 local report = require('deadcode.actions.report')
 
+--- Entry point.
+---@class deadcode.cli
+---@field EXIT_OK integer
+---@field EXIT_FINDINGS integer
+---@field EXIT_ERROR integer
 local cli = {}
 
 cli.EXIT_OK = 0
 cli.EXIT_FINDINGS = 1
 cli.EXIT_ERROR = 2
 
+--- Diagnostics carry their severity in their text, so that the collectors can
+--- append to one list without also threading a severity through.
+---@param diagnostic string
+---@return boolean
 local function is_error(diagnostic)
   return diagnostic:sub(1, 6) == 'Error:'
 end
 
+--- What `cli.main` accepts in place of the real implementations. Only the
+--- filesystem is swappable, which is all the test suite needs.
+---@class deadcode.cli.Deps
+---@field fs deadcode.FS|nil
+
 --- Run an analysis.
--- @param argv array of command-line arguments
--- @param deps optional { fs = <filesystem table> } for tests
--- @return output string (possibly nil), exit code
+---@param argv string[]|nil array of command-line arguments
+---@param deps deadcode.cli.Deps|nil substitutes for tests
+---@return string|nil output nil when there is nothing to print
+---@return integer exit_code one of the `EXIT_` constants
 function cli.main(argv, deps)
   deps = deps or {}
   local fs = deps.fs or default_fs
@@ -74,6 +89,8 @@ function cli.main(argv, deps)
 end
 
 --- Print the result of `main` and return the exit code.
+---@param argv string[]|nil
+---@return integer exit_code
 function cli.run(argv)
   local output, exit_code = cli.main(argv)
   if output and output ~= '' then io.stdout:write(output, '\n') end

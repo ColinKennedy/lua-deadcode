@@ -9,6 +9,47 @@
 -- measured in bytes. Only start positions are recorded: this tool reports
 -- findings, it never rewrites source, so no node ever needs an end position.
 
+--- What a token is. `Keyword` is split out from `Name` at scan time because
+--- every consumer needs the distinction and the keyword set is fixed.
+---@alias deadcode.TokenType
+---| '"Name"'
+---| '"Keyword"'
+---| '"Number"'
+---| '"String"'
+---| '"Op"'
+---| '"EOF"'
+
+--- One token. `line` and `col` are 1-based and measured in bytes, and mark
+--- where the token starts; nothing here records where it ends.
+---@class deadcode.Token
+---@field type deadcode.TokenType
+---@field value string decoded for strings, verbatim for everything else
+---@field line integer
+---@field col integer
+
+--- One comment, kept out of the token stream because only the noqa machinery
+--- reads them.
+---@class deadcode.Comment
+---@field text string the body, without the `--` or the long-bracket delimiters
+---@field line integer line the comment opens on
+---@field col integer
+---@field long boolean true for the `--[[ ]]` form
+---@field end_line integer equals `line` unless the comment is long
+---@field own_line boolean true when no token precedes it on `line`
+---@field applies_to integer line a directive inside this comment governs.
+--- Starts out as `line` and is refined by `Scanner:resolve_comment_targets`,
+--- which always runs before the comments escape this module.
+
+--- The table thrown by `Scanner:error` and caught in `Lexer.tokenize`. Thrown
+--- rather than returned so the deeply nested readers can give up in one step.
+---@class deadcode.LexError
+---@field deadcode_lex true marks the table as ours rather than a runtime error
+---@field msg string
+---@field line integer
+---@field chunkname string
+
+--- Tokeniser for Lua source.
+---@class deadcode.Lexer
 local Lexer = {}
 
 local byte, sub, find, gsub = string.byte, string.sub, string.find, string.gsub
@@ -63,14 +104,23 @@ local OPERATORS = {
 local LF, CR = 10, 13
 local SPACE, TAB, VTAB, FF = 32, 9, 11, 12
 
+--- The classifiers all take a raw byte, and all accept nil so that callers can
+--- pass `byte(src, pos)` straight through at the end of the input.
+
+---@param b integer|nil
+---@return boolean
 local function is_space(b)
   return b == SPACE or b == TAB or b == VTAB or b == FF
 end
 
+---@param b integer|nil
+---@return boolean|nil
 local function is_digit(b)
   return b and b >= 48 and b <= 57
 end
 
+---@param b integer|nil
+---@return boolean|nil
 local function is_hex(b)
   return b
     and (
@@ -80,17 +130,34 @@ local function is_hex(b)
     ) -- A-F
 end
 
+---@param b integer|nil
+---@return boolean|nil
 local function is_name_start(b)
   return b and ((b >= 97 and b <= 122) or (b >= 65 and b <= 90) or b == 95)
 end
 
+---@param b integer|nil
+---@return boolean|nil
 local function is_name_part(b)
   return is_name_start(b) or is_digit(b)
 end
 
+--- Mutable scan state: one instance per chunk, thrown away once run.
+---@class deadcode.Scanner
+---@field src string
+---@field len integer byte length of `src`
+---@field pos integer 1-based byte offset of the next byte to read
+---@field line integer 1-based line the scanner is on
+---@field line_start integer byte offset of the first byte of `line`
+---@field chunkname string used only to build error messages
+---@field tokens deadcode.Token[]
+---@field comments deadcode.Comment[]
 local Scanner = {}
 Scanner.__index = Scanner
 
+---@param src string
+---@param chunkname string|nil defaults to `'?'`
+---@return deadcode.Scanner
 local function new_scanner(src, chunkname)
   return setmetatable({
     src = src,
@@ -104,10 +171,16 @@ local function new_scanner(src, chunkname)
   }, Scanner)
 end
 
+--- The 1-based column of the current position.
+---@return integer
 function Scanner:col()
   return self.pos - self.line_start + 1
 end
 
+--- Abandon the scan. Never returns.
+---@param msg string
+---@param line integer|nil the offending line; defaults to the current one,
+--- which is wrong for constructs that span lines, so readers pass the opener
 function Scanner:error(msg, line)
   error({ deadcode_lex = true, msg = msg, line = line or self.line, chunkname = self.chunkname }, 0)
 end
@@ -123,6 +196,8 @@ function Scanner:newline()
 end
 
 -- Matches `[`, `=`*n, `[` at the current position. Returns the level or nil.
+---@return integer|nil level number of `=` signs, nil when this is not an opener
+---@return integer|nil body_start byte offset just past the opener
 function Scanner:long_bracket_level()
   if byte(self.src, self.pos) ~= 91 then return nil end -- '['
   local p = self.pos + 1
@@ -136,6 +211,10 @@ function Scanner:long_bracket_level()
 end
 
 -- Reads the body of a long string/comment. `start_pos` is just past the opener.
+---@param level integer number of `=` signs the closer must match
+---@param start_pos integer
+---@param opener_line integer reported if the body is never closed
+---@return string content
 function Scanner:read_long_body(level, start_pos, opener_line)
   self.pos = start_pos
   -- A newline immediately after the opening bracket is not part of the content.
@@ -162,6 +241,10 @@ function Scanner:read_long_body(level, start_pos, opener_line)
   end
 end
 
+--- Read a `'` or `"` delimited string and decode the escapes that matter.
+---@param quote integer byte value of the opening (and closing) quote
+---@param line integer reported if the string is never closed
+---@return string
 function Scanner:read_short_string(quote, line)
   local start = self.pos
   self.pos = self.pos + 1
@@ -228,6 +311,8 @@ function Scanner:read_short_string(quote, line)
   return table.concat(pieces)
 end
 
+--- Read a numeral, including hex floats and the LuaJIT suffixes.
+---@return string the literal verbatim; nothing here needs its value
 function Scanner:read_number()
   local start = self.pos
   local src = self.src
@@ -274,11 +359,19 @@ function Scanner:read_number()
   return sub(src, start, self.pos - 1)
 end
 
+--- Append a token.
+---@param type_ deadcode.TokenType
+---@param value string
+---@param line integer
+---@param col integer
 function Scanner:push(type_, value, line, col)
   local t = self.tokens
   t[#t + 1] = { type = type_, value = value, line = line, col = col }
 end
 
+--- Scan the whole chunk. Raises a `deadcode.LexError` on malformed input.
+---@return deadcode.Token[] tokens always ends with an `EOF` token
+---@return deadcode.Comment[] comments
 function Scanner:run()
   local src, len = self.src, self.len
 
@@ -305,7 +398,7 @@ function Scanner:run()
       local own_line = (last == nil) or (last.line ~= line)
 
       local level, body_start = self:long_bracket_level()
-      if level then
+      if level and body_start then
         local text = self:read_long_body(level, body_start, line)
         self.comments[#self.comments + 1] = {
           text = text,
@@ -314,6 +407,7 @@ function Scanner:run()
           long = true,
           end_line = self.line,
           own_line = own_line,
+          applies_to = line,
         }
       else
         local nl = find(src, '[\r\n]', self.pos) or (len + 1)
@@ -326,6 +420,7 @@ function Scanner:run()
           long = false,
           end_line = line,
           own_line = own_line,
+          applies_to = line,
         }
       end
     elseif is_name_start(b) then
@@ -345,7 +440,7 @@ function Scanner:run()
     else
       local line, col = self.line, self:col()
       local level, body_start = self:long_bracket_level()
-      if level then
+      if level and body_start then
         self:push('String', self:read_long_body(level, body_start, line), line, col)
       else
         local matched
@@ -395,12 +490,20 @@ end
 --- Tokenise `src`.
 -- On success returns `tokens, comments`. On a lexical error returns
 -- `nil, message` - callers skip the file rather than aborting the run.
+---@param src string
+---@param chunkname string|nil name used in error messages; defaults to `'?'`
+---@return deadcode.Token[]|nil tokens nil when `src` could not be tokenised
+---@return deadcode.Comment[]|string comments the comment list on success, the
+--- error message when `tokens` is nil
 function Lexer.tokenize(src, chunkname)
   local scanner = new_scanner(src, chunkname)
   local ok, tokens, comments = pcall(scanner.run, scanner)
   if not ok then
+    -- On failure pcall puts the thrown value where the first return would be.
+    ---@type any
     local err = tokens
     if type(err) == 'table' and err.deadcode_lex then
+      ---@cast err deadcode.LexError
       return nil, string.format('%s:%d: %s', err.chunkname, err.line, err.msg)
     end
     return nil, tostring(err)

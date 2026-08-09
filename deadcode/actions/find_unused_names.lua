@@ -10,7 +10,13 @@ local CodeItem = require('deadcode.code_item')
 local ignore = require('deadcode.ignore')
 local noqa = require('deadcode.noqa')
 
---- @return items (sorted findings), diagnostics (list of strings)
+--- Analyse every file and return what is left unused.
+---@param filenames string[]
+---@param args deadcode.Args
+---@param fs deadcode.FS
+---@return deadcode.CodeItem[] items sorted by `CodeItem.compare`
+---@return string[] diagnostics messages for the user; `Error:` prefixed ones
+--- are fatal to the exit status but never to the run
 return function(filenames, args, fs)
   local program = Resolver.new_program()
   local directives_by_file = {}
@@ -31,6 +37,7 @@ return function(filenames, args, fs)
         diagnostics[#diagnostics + 1] =
           string.format('Error: failed to parse %s, ignoring it (%s)', file, tostring(comments))
       else
+        ---@cast comments deadcode.Comment[] the error message is the other case
         local directives = noqa.parse(comments)
         directives_by_file[file] = directives
 

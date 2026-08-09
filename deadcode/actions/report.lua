@@ -8,8 +8,14 @@ local RED = '\27[91m'
 local BOLD = '\27[1m'
 local RESET = '\27[0m'
 
+--- Render findings as text.
+---@class deadcode.report
 local report = {}
 
+--- One report line: position, code, message.
+---@param item deadcode.CodeItem
+---@param use_color boolean
+---@return string
 function report.format_item(item, use_color)
   local code = item.code
   local text = item:text()
@@ -24,6 +30,9 @@ function report.format_item(item, use_color)
 end
 
 --- Build the report body. Returns nil when there is nothing to say.
+---@param items deadcode.CodeItem[]
+---@param args deadcode.Args
+---@return string|nil
 function report.build(items, args)
   if args.quiet then return nil end
   if args.count then return tostring(#items) end
@@ -38,6 +47,8 @@ function report.build(items, args)
 end
 
 --- The message shown when a run finds nothing.
+---@param args deadcode.Args
+---@return string|nil nil when the run was asked to stay silent
 function report.all_clear(args)
   if args.quiet or args.count then return nil end
   if args.no_color then return 'Well done! No dead code found.' end

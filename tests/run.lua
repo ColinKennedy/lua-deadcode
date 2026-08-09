@@ -10,6 +10,8 @@ local script_dir = script:match('^(.*)[/\\][^/\\]+$') or '.'
 local root = script_dir .. '/..'
 package.path = root .. '/?.lua;' .. root .. '/?/init.lua;' .. package.path
 
+--- Every `test_*.lua` module name under `tests/`, sorted.
+---@return string[]
 local function discover()
   local names = {}
   local pipe = io.popen(

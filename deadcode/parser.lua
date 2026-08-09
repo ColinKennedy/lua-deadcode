@@ -10,6 +10,127 @@
 
 local Lexer = require('deadcode.lexer')
 
+--- Every tag a node can carry. `NameDef` is the odd one out: it is a binding
+--- occurrence rather than an expression, and the resolver depends on never
+--- confusing one with a `Name` reference.
+---@alias deadcode.NodeTag
+---| '"Chunk"'
+---| '"Block"'
+---| '"NameDef"'
+---| '"Name"'
+---| '"Index"'
+---| '"Paren"'
+---| '"Vararg"'
+---| '"Nil"'
+---| '"True"'
+---| '"False"'
+---| '"Number"'
+---| '"String"'
+---| '"Table"'
+---| '"Function"'
+---| '"Call"'
+---| '"MethodCall"'
+---| '"UnOp"'
+---| '"BinOp"'
+---| '"LocalStat"'
+---| '"LocalFunc"'
+---| '"FuncStat"'
+---| '"Assign"'
+---| '"CallStat"'
+---| '"Do"'
+---| '"While"'
+---| '"Repeat"'
+---| '"If"'
+---| '"NumericFor"'
+---| '"GenericFor"'
+---| '"Return"'
+---| '"Break"'
+---| '"Goto"'
+---| '"Label"'
+
+--- What a binding occurrence was written as. The resolver reports each kind
+--- under its own code, so the distinction has to survive parsing.
+---@alias deadcode.BindingKind '"local"' | '"param"' | '"loop"' | '"localfunc"'
+
+--- One entry in a table constructor.
+---@class deadcode.TableField
+---@field kind '"bracket"' | '"named"' | '"item"'
+---@field key deadcode.Node|nil the expression, for the `bracket` form
+---@field name string|nil the literal key, for the `named` form
+---@field line integer|nil position of `name`, for the `named` form
+---@field col integer|nil
+---@field value deadcode.Node
+
+--- One `if`/`elseif` arm. `line` and `col` point at the keyword that opened it,
+--- which is what a dead-branch finding is reported against.
+---@class deadcode.IfClause
+---@field cond deadcode.Node
+---@field body deadcode.Node the arm's `Block`
+---@field line integer
+---@field col integer
+
+--- An AST node.
+---
+--- The shape is deliberately loose: one table with a `tag` and whichever fields
+--- that tag needs, rather than a class per variant. The resolver dispatches on
+--- `tag`, and nothing reads a field that its tag does not populate, so a class
+--- per variant would buy only casts. Each field below names the tags that carry
+--- it; on any other tag it is absent, which is why `node` builds a bare table
+--- and casts. The handful of fields marked optional are optional *within* their
+--- own tag - `step` on a `NumericFor`, `orelse` on an `If` - and the code tests
+--- for them.
+---@class deadcode.Node
+---@field tag deadcode.NodeTag
+---@field line integer 1-based line the construct starts on
+---@field col integer 1-based column, in bytes
+---@field name string NameDef, Name, Label
+---@field def deadcode.Node LocalFunc; the NameDef for the bound name
+---@field kind deadcode.BindingKind NameDef
+---@field implicit? boolean NameDef; true for a method's unwritten `self`
+---@field value string Number, String
+---@field body deadcode.Node Chunk, Function, Do, While, Repeat, NumericFor, GenericFor
+---@field stats deadcode.Node[] Block
+---@field fields deadcode.TableField[] Table
+---@field params deadcode.Node[] Function; each a NameDef
+---@field is_method boolean Function, FuncStat
+---@field obj deadcode.Node Index, MethodCall
+---@field key deadcode.Node Index
+---@field dot boolean Index; false for the `[expr]` form
+---@field key_line? integer Index, dotted form only
+---@field key_col? integer Index, dotted form only
+---@field method string MethodCall
+---@field args deadcode.Node[] Call, MethodCall
+---@field func deadcode.Node Call (the callee), LocalFunc and FuncStat (the body)
+---@field expr deadcode.Node Paren
+---@field op string UnOp, BinOp
+---@field operand deadcode.Node UnOp
+---@field left deadcode.Node BinOp
+---@field right deadcode.Node BinOp
+---@field exprs deadcode.Node[] Return, LocalStat, GenericFor, Assign
+---@field names deadcode.Node[] LocalStat, GenericFor; each a NameDef
+---@field target deadcode.Node FuncStat
+---@field targets deadcode.Node[] Assign
+---@field call deadcode.Node CallStat
+---@field cond deadcode.Node While, Repeat
+---@field clauses deadcode.IfClause[] If
+---@field orelse? deadcode.Node If; the `else` Block
+---@field orelse_line integer If, set whenever `orelse` is
+---@field orelse_col integer If
+---@field var deadcode.Node NumericFor; a NameDef
+---@field start deadcode.Node NumericFor
+---@field stop deadcode.Node NumericFor
+---@field step? deadcode.Node NumericFor
+---@field label string Goto
+
+--- The table thrown by `P:error` and caught in `Parser.parse`.
+---@class deadcode.ParseError
+---@field deadcode_parse true marks the table as ours rather than a runtime error
+---@field msg string
+---@field line integer
+---@field chunkname string
+
+--- Recursive-descent parser for Lua.
+---@class deadcode.Parser
 local Parser = {}
 
 -- Binary operator priorities, matching lparser.c. Bitwise operators are
@@ -48,9 +169,17 @@ local BLOCK_ENDERS = {
   ['until'] = true,
 }
 
+--- Mutable parse state: a token cursor and the name to blame in errors.
+---@class deadcode.P
+---@field tokens deadcode.Token[]
+---@field pos integer index of the token about to be read
+---@field chunkname string
 local P = {}
 P.__index = P
 
+---@param tokens deadcode.Token[]
+---@param chunkname string|nil defaults to `'?'`
+---@return deadcode.P
 local function new_parser(tokens, chunkname)
   return setmetatable({
     tokens = tokens,
@@ -59,16 +188,35 @@ local function new_parser(tokens, chunkname)
   }, P)
 end
 
+--- The token `offset` places ahead, without consuming anything.
+---@param offset integer|nil defaults to 0, the current token
+---@return deadcode.Token|nil nil past the end of the stream
 function P:peek(offset)
   return self.tokens[self.pos + (offset or 0)]
 end
 
+--- Consume and return the current token.
+---
+--- Every caller has already established that a token is there, either through
+--- `check` or through `expect`, and no caller consumes the trailing `EOF`, so
+--- the result is never nil in practice.
+---@return deadcode.Token
 function P:next()
   local tok = self.tokens[self.pos]
   self.pos = self.pos + 1
+  ---@cast tok deadcode.Token
   return tok
 end
 
+--- Abandon the parse.
+---
+--- This never returns, but the declared type is `any` so that callers can
+--- write `return self:error(...)` in a function that owes a value. Doing so is
+--- also what tells the analyser that the branch is terminal.
+---@param msg string
+---@param tok deadcode.Token|deadcode.Node|nil what to blame; defaults to the
+--- current token
+---@return any
 function P:error(msg, tok)
   tok = tok or self:peek()
   error({
@@ -80,28 +228,46 @@ function P:error(msg, tok)
 end
 
 --- True when the current token is the given operator or keyword.
+---@param type_ deadcode.TokenType
+---@param value string|nil when omitted, any token of `type_` matches
+---@return boolean|nil
 function P:check(type_, value)
   local tok = self:peek()
   return tok and tok.type == type_ and (value == nil or tok.value == value)
 end
 
+---@param value string
+---@return boolean|nil
 function P:check_op(value)
   return self:check('Op', value)
 end
+
+---@param value string
+---@return boolean|nil
 function P:check_kw(value)
   return self:check('Keyword', value)
 end
 
 --- Consumes the token if it matches, returning it, else nil.
+---@param type_ deadcode.TokenType
+---@param value string|nil
+---@return deadcode.Token|nil
 function P:accept(type_, value)
   if self:check(type_, value) then return self:next() end
   return nil
 end
 
+---@param value string
+---@return deadcode.Token|nil
 function P:accept_op(value)
   return self:accept('Op', value)
 end
 
+--- Consume the token, or abandon the parse if it is not there.
+---@param type_ deadcode.TokenType
+---@param value string|nil
+---@param what string|nil what to name in the message; defaults to `value`
+---@return deadcode.Token
 function P:expect(type_, value, what)
   local tok = self:peek()
   if not self:check(type_, value) then
@@ -116,33 +282,69 @@ function P:expect(type_, value, what)
   return self:next()
 end
 
+---@param value string
+---@return deadcode.Token
 function P:expect_op(value)
   return self:expect('Op', value)
 end
+
+---@param value string
+---@return deadcode.Token
 function P:expect_kw(value)
   return self:expect('Keyword', value)
 end
 
 --- `goto` is a keyword from 5.2 on, but a perfectly ordinary identifier in 5.1.
 -- Accepting it in name position keeps older code parseable.
+---@return deadcode.Token
 function P:expect_name()
   local tok = self:peek()
-  if tok and (tok.type == 'Name' or (tok.type == 'Keyword' and tok.value == 'goto')) then
-    return self:next()
+  if not (tok and (tok.type == 'Name' or (tok.type == 'Keyword' and tok.value == 'goto'))) then
+    return self:error(
+      string.format("<name> expected near '%s'", tok and tostring(tok.value) or '<eof>')
+    )
   end
-  self:error(string.format("<name> expected near '%s'", tok and tostring(tok.value) or '<eof>'))
+  return self:next()
 end
 
+--- A bare node. The caller fills in whatever else its tag needs, which is why
+--- the result is cast rather than built complete: no tag uses more than a
+--- handful of the fields `deadcode.Node` declares.
+---@param tag deadcode.NodeTag
+---@param line integer
+---@param col integer
+---@return deadcode.Node
 local function node(tag, line, col)
-  return { tag = tag, line = line, col = col }
+  local n = { tag = tag, line = line, col = col }
+  ---@cast n deadcode.Node
+  return n
 end
 
+--- A binding occurrence, taking its name and position from the token.
+---@param tok deadcode.Token
+---@param kind deadcode.BindingKind
+---@return deadcode.Node a NameDef node
 local function name_def(tok, kind)
-  return { tag = 'NameDef', name = tok.value, line = tok.line, col = tok.col, kind = kind }
+  local n = node('NameDef', tok.line, tok.col)
+  n.name = tok.value
+  n.kind = kind
+  return n
+end
+
+--- A String node for a name used as a literal: a dotted key, or the argument
+--- of the `f"str"` call form.
+---@param tok deadcode.Token
+---@return deadcode.Node a String node
+local function string_node(tok)
+  local n = node('String', tok.line, tok.col)
+  n.value = tok.value
+  return n
 end
 
 -- ---------------------------------------------------------------- expressions
 
+--- Parse a `{ ... }` constructor.
+---@return deadcode.Node a Table node
 function P:parse_table()
   local open = self:expect_op('{')
   local n = node('Table', open.line, open.col)
@@ -183,6 +385,12 @@ function P:parse_table()
   return n
 end
 
+--- Parse a parameter list and body, up to and including the closing `end`.
+---@param line integer position of the construct that introduced the function,
+--- not of the `(` - that is what a finding should point at
+---@param col integer
+---@param is_method boolean|nil true to add the implicit `self` parameter
+---@return deadcode.Node a Function node
 function P:parse_func_body(line, col, is_method)
   local n = node('Function', line, col)
   n.params = {}
@@ -192,14 +400,11 @@ function P:parse_func_body(line, col, is_method)
     -- The implicit `self` is a real binding, but one the author did not write.
     -- Flagging it as unused would be nonsense, so it is marked implicit and the
     -- suppression layer always exempts it.
-    n.params[1] = {
-      tag = 'NameDef',
-      name = 'self',
-      line = line,
-      col = col,
-      kind = 'param',
-      implicit = true,
-    }
+    local implicit_self = node('NameDef', line, col)
+    implicit_self.name = 'self'
+    implicit_self.kind = 'param'
+    implicit_self.implicit = true
+    n.params[1] = implicit_self
   end
 
   self:expect_op('(')
@@ -219,6 +424,8 @@ end
 
 --- Suffixes shared by prefixexp: `.name`, `[expr]`, `:name(args)`, `(args)`,
 -- `"str"` and `{table}` call sugar.
+---@param base deadcode.Node the expression the suffixes apply to
+---@return deadcode.Node base itself when no suffix follows
 function P:parse_suffixed(base)
   while true do
     if self:check_op('.') then
@@ -226,7 +433,7 @@ function P:parse_suffixed(base)
       local key = self:expect_name()
       local n = node('Index', base.line, base.col)
       n.obj = base
-      n.key = { tag = 'String', value = key.value, line = key.line, col = key.col }
+      n.key = string_node(key)
       n.dot = true
       n.key_line, n.key_col = key.line, key.col
       base = n
@@ -257,10 +464,12 @@ function P:parse_suffixed(base)
   end
 end
 
+--- Parse a call's arguments in any of the three spellings Lua allows.
+---@return deadcode.Node[]
 function P:parse_call_args()
   if self:check('String') then
     local tok = self:next()
-    return { { tag = 'String', value = tok.value, line = tok.line, col = tok.col } }
+    return { string_node(tok) }
   end
   if self:check_op('{') then return { self:parse_table() } end
 
@@ -275,9 +484,11 @@ function P:parse_call_args()
   return args
 end
 
+--- Parse the head of a prefixexp: a bare name or a parenthesised expression.
+---@return deadcode.Node a Name or Paren node
 function P:parse_primary()
   local tok = self:peek()
-  if not tok then self:error('unexpected <eof>') end
+  if not tok then return self:error('unexpected <eof>') end
 
   if tok.type == 'Name' or (tok.type == 'Keyword' and tok.value == 'goto') then
     self:next()
@@ -295,12 +506,14 @@ function P:parse_primary()
     return n
   end
 
-  self:error(string.format("unexpected symbol near '%s'", tostring(tok.value)))
+  return self:error(string.format("unexpected symbol near '%s'", tostring(tok.value)))
 end
 
+--- Parse an expression with no operators in it.
+---@return deadcode.Node
 function P:parse_simple()
   local tok = self:peek()
-  if not tok then self:error('unexpected <eof>') end
+  if not tok then return self:error('unexpected <eof>') end
 
   if tok.type == 'Number' then
     self:next()
@@ -343,6 +556,10 @@ function P:parse_simple()
   return self:parse_suffixed(self:parse_primary())
 end
 
+--- Parse an expression by precedence climbing.
+---@param limit integer|nil stop before any operator binding this loosely;
+--- defaults to 0, which consumes the whole expression
+---@return deadcode.Node
 function P:parse_expr(limit)
   limit = limit or 0
   local left
@@ -355,6 +572,7 @@ function P:parse_expr(limit)
     )
 
   if is_unary then
+    ---@cast tok -nil `is_unary` is only ever true for a token that is there.
     self:next()
     local operand = self:parse_expr(UNARY_PRIORITY)
     left = node('UnOp', tok.line, tok.col)
@@ -370,6 +588,7 @@ function P:parse_expr(limit)
     local name = (op.type == 'Op' or op.type == 'Keyword') and op.value or nil
     local prio = name and BINARY_PRIORITY[name]
     if not prio or prio[1] <= limit then break end
+    ---@cast name -nil a priority was only looked up if there was a name.
 
     self:next()
     local right = self:parse_expr(prio[2])
@@ -385,6 +604,9 @@ end
 
 -- ---------------------------------------------------------------- statements
 
+--- Parse statements up to whatever closes the enclosing construct. The closing
+--- token is left for the caller to consume.
+---@return deadcode.Node a Block node
 function P:parse_block()
   local first = self:peek()
   local block = node('Block', first and first.line or 0, first and first.col or 0)
@@ -407,6 +629,8 @@ function P:parse_block()
   return block
 end
 
+--- Parse a `return`, including the optional trailing `;`.
+---@return deadcode.Node a Return node
 function P:parse_return()
   local kw = self:expect_kw('return')
   local n = node('Return', kw.line, kw.col)
@@ -428,16 +652,19 @@ function P:parse_return()
 end
 
 --- Parses `funcname := Name {'.' Name} [':' Name]`.
--- @return target expression, whether the final separator was `:`
+---@return deadcode.Node target a Name, or an Index chain for a dotted name
+---@return boolean is_method true when the final separator was `:`
 function P:parse_func_name()
   local first = self:expect_name()
   local target = node('Name', first.line, first.col)
   target.name = first.value
 
+  --- Wrap `target` in an Index node keyed by `key`.
+  ---@param key deadcode.Token
   local function extend(key)
     local n = node('Index', target.line, target.col)
     n.obj = target
-    n.key = { tag = 'String', value = key.value, line = key.line, col = key.col }
+    n.key = string_node(key)
     n.dot = true
     n.key_line, n.key_col = key.line, key.col
     target = n
@@ -457,8 +684,12 @@ function P:parse_func_name()
   return target, false
 end
 
+--- Parse one statement.
+---@return deadcode.Node|nil nil for a bare `;`, which binds nothing
 function P:parse_statement()
   local tok = self:peek()
+  ---@cast tok -nil `parse_block` is the only caller and it stops at `EOF`, so
+  --- a statement is only ever started when there is a token to start it with.
 
   if tok.type == 'Op' and tok.value == ';' then
     self:next()
@@ -595,7 +826,7 @@ function P:parse_statement()
         local n = node('LocalFunc', tok.line, tok.col)
         -- The binding is in scope inside its own body, which is what makes
         -- `local function` recursive. The resolver adds it before descending.
-        n.name = name_def(name, 'localfunc')
+        n.def = name_def(name, 'localfunc')
         n.func = self:parse_func_body(fkw.line, fkw.col, false)
         return n
       end
@@ -661,6 +892,11 @@ end
 -- Returns `chunk, comments` on success, or `nil, message` on any lexical or
 -- syntax error. Callers report and skip the file: a broken file must never
 -- abort a whole run.
+---@param src string
+---@param chunkname string|nil name used in error messages; defaults to `'?'`
+---@return deadcode.Node|nil chunk nil when `src` could not be parsed
+---@return deadcode.Comment[]|string comments the comment list on success, the
+--- error message when `chunk` is nil
 function Parser.parse(src, chunkname)
   local tokens, comments = Lexer.tokenize(src, chunkname)
   if not tokens then
@@ -681,8 +917,11 @@ function Parser.parse(src, chunkname)
   end)
 
   if not ok then
+    -- On failure pcall puts the thrown value where the first return would be.
+    ---@type any
     local err = result
     if type(err) == 'table' and err.deadcode_parse then
+      ---@cast err deadcode.ParseError
       return nil, string.format('%s:%d: %s', err.chunkname, err.line, err.msg)
     end
     return nil, tostring(err)

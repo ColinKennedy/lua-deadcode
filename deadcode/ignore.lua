@@ -11,13 +11,18 @@
 -- Layer 4 is applied by the reporter, which has the comment table; layers 1-3
 -- live here.
 
+--- Suppression: every reason a finding might not be reported.
+---@class deadcode.ignore
 local ignore = {}
 
+---@type table<string, string> glob -> compiled Lua pattern
 local pattern_cache = {}
 
 --- Translate a shell-style glob into a Lua pattern anchored at both ends.
 -- `*` matches any run of characters including `/`, matching the fnmatch
 -- semantics the Python original relies on. `?` matches one character.
+---@param glob string
+---@return string a Lua pattern
 function ignore.glob_to_pattern(glob)
   local cached = pattern_cache[glob]
   if cached then return cached end
@@ -34,6 +39,9 @@ function ignore.glob_to_pattern(glob)
 end
 
 --- True when `value` matches any glob in `patterns`.
+---@param value string|nil
+---@param patterns string[]|nil
+---@return boolean
 function ignore.matches(value, patterns)
   if not patterns or #patterns == 0 or value == nil then return false end
   value = tostring(value)
@@ -45,6 +53,9 @@ end
 
 --- A bare `*Mixin`-style pattern should also match a dotted path's last
 -- segment, so users can write `--ignore-names=setup` rather than a full path.
+---@param name string|nil
+---@param patterns string[]|nil
+---@return boolean
 function ignore.matches_name(name, patterns)
   if ignore.matches(name, patterns) then return true end
   local tail = name and name:match('([^%.]+)$')
@@ -103,6 +114,8 @@ local TEST_PATH_PATTERNS = {
 }
 
 --- Test files get looser treatment for names a framework reaches dynamically.
+---@param path string|nil
+---@return boolean
 function ignore.is_test_file(path)
   if not path then return false end
   local normalised = path:gsub('\\', '/'):gsub('^%./', '')
@@ -114,6 +127,8 @@ end
 
 --- `_` is the universal Lua placeholder and `_name` the conventional marker for
 -- a binding that exists only for its position. Neither is ever a finding.
+---@param name string
+---@return boolean
 function ignore.is_placeholder_name(name)
   return name == '_' or name:sub(1, 1) == '_'
 end
@@ -121,6 +136,10 @@ end
 --- Per-kind heuristics, mirroring the shape of the Python original's
 -- `_ignore_variable` / `_ignore_import` / ... callbacks.
 -- Returns true when the finding should be dropped before user config applies.
+---@param item deadcode.CodeItem
+---@param context deadcode.RawFinding|nil the raw finding `item` was built from,
+--- which is where `implicit` survives
+---@return boolean
 function ignore.by_kind(item, context)
   local type_, name = item.type, item.name
 
@@ -157,6 +176,9 @@ end
 -- A pattern matches if it matches the whole path, any ancestor directory, or
 -- any single path segment. Without this, an anchored glob would only ever
 -- match a full path and every exclusion would need a `*` on each end.
+---@param path string|nil
+---@param patterns string[]|nil
+---@return boolean
 function ignore.matches_path(path, patterns)
   if not patterns or #patterns == 0 or path == nil then return false end
   if ignore.matches(path, patterns) then return true end
@@ -170,6 +192,11 @@ function ignore.matches_path(path, patterns)
   return false
 end
 
+--- The user-configurable layer proper: does this finding match a name or path
+--- the user asked to be left alone?
+---@param item deadcode.CodeItem
+---@param args deadcode.Args
+---@return boolean
 function ignore.by_config(item, args)
   if ignore.matches_name(item.name, args.ignore_names) then return true end
   if ignore.matches_path(item.file, args.ignore_names_in_files) then return true end
