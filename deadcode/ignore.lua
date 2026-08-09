@@ -23,7 +23,7 @@ local pattern_cache = {}
 -- semantics the Python original relies on. `?` matches one character.
 ---@param glob string
 ---@return string a Lua pattern
-function ignore.glob_to_pattern(glob)
+local function glob_to_pattern(glob)
   local cached = pattern_cache[glob]
   if cached then return cached end
 
@@ -42,11 +42,11 @@ end
 ---@param value string|nil
 ---@param patterns string[]|nil
 ---@return boolean
-function ignore.matches(value, patterns)
+local function matches(value, patterns)
   if not patterns or #patterns == 0 or value == nil then return false end
   value = tostring(value)
   for i = 1, #patterns do
-    if value:find(ignore.glob_to_pattern(patterns[i])) then return true end
+    if value:find(glob_to_pattern(patterns[i])) then return true end
   end
   return false
 end
@@ -56,10 +56,10 @@ end
 ---@param name string|nil
 ---@param patterns string[]|nil
 ---@return boolean
-function ignore.matches_name(name, patterns)
-  if ignore.matches(name, patterns) then return true end
+local function matches_name(name, patterns)
+  if matches(name, patterns) then return true end
   local tail = name and name:match('([^%.]+)$')
-  if tail and tail ~= name then return ignore.matches(tail, patterns) end
+  if tail and tail ~= name then return matches(tail, patterns) end
   return false
 end
 
@@ -116,7 +116,7 @@ local TEST_PATH_PATTERNS = {
 --- Test files get looser treatment for names a framework reaches dynamically.
 ---@param path string|nil
 ---@return boolean
-function ignore.is_test_file(path)
+local function is_test_file(path)
   if not path then return false end
   local normalised = path:gsub('\\', '/'):gsub('^%./', '')
   for i = 1, #TEST_PATH_PATTERNS do
@@ -129,7 +129,7 @@ end
 -- a binding that exists only for its position. Neither is ever a finding.
 ---@param name string
 ---@return boolean
-function ignore.is_placeholder_name(name)
+local function is_placeholder_name(name)
   return name == '_' or name:sub(1, 1) == '_'
 end
 
@@ -149,7 +149,7 @@ function ignore.by_kind(item, context)
     or type_ == 'loop_variable'
     or type_ == 'require'
   then
-    if ignore.is_placeholder_name(name) then return true end
+    if is_placeholder_name(name) then return true end
   end
 
   if type_ == 'parameter' and context and context.implicit then
@@ -161,10 +161,7 @@ function ignore.by_kind(item, context)
   -- Test frameworks reach globals and table fields by name at runtime
   -- (busted's `describe`/`it`, love2d callbacks, luaunit's `TestFoo.testBar`),
   -- so static reachability says nothing useful about them there.
-  if
-    (type_ == 'global' or type_ == 'field' or type_ == 'method')
-    and ignore.is_test_file(item.file)
-  then
+  if (type_ == 'global' or type_ == 'field' or type_ == 'method') and is_test_file(item.file) then
     return true
   end
 
@@ -181,13 +178,13 @@ end
 ---@return boolean
 function ignore.matches_path(path, patterns)
   if not patterns or #patterns == 0 or path == nil then return false end
-  if ignore.matches(path, patterns) then return true end
+  if matches(path, patterns) then return true end
 
   local prefix
   for segment in tostring(path):gmatch('[^/]+') do
     prefix = prefix and (prefix .. '/' .. segment) or segment
-    if ignore.matches(segment, patterns) then return true end
-    if ignore.matches(prefix, patterns) then return true end
+    if matches(segment, patterns) then return true end
+    if matches(prefix, patterns) then return true end
   end
   return false
 end
@@ -198,7 +195,7 @@ end
 ---@param args deadcode.Args
 ---@return boolean
 function ignore.by_config(item, args)
-  if ignore.matches_name(item.name, args.ignore_names) then return true end
+  if matches_name(item.name, args.ignore_names) then return true end
   if ignore.matches_path(item.file, args.ignore_names_in_files) then return true end
   return false
 end

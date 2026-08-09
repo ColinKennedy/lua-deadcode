@@ -16,7 +16,7 @@ local report = {}
 ---@param item deadcode.CodeItem
 ---@param use_color boolean
 ---@return string
-function report.format_item(item, use_color)
+local function format_item(item, use_color)
   local code = item.code
   local text = item:text()
 
@@ -41,7 +41,7 @@ function report.build(items, args)
   local use_color = not args.no_color
   local lines = {}
   for index, item in ipairs(items) do
-    lines[index] = report.format_item(item, use_color)
+    lines[index] = format_item(item, use_color)
   end
   return table.concat(lines, '\n')
 end

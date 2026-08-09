@@ -7,7 +7,7 @@
 local real_fs = require('deadcode.fs')
 local cli = require('deadcode.cli')
 
---- The table thrown by `support.fail`, so that the runner can tell a failed
+--- The table thrown by `fail`, so that the runner can tell a failed
 --- assertion apart from an error the code under test did not expect.
 ---@class deadcode.test.Failure
 ---@field deadcode_test_failure true
@@ -139,7 +139,7 @@ end
 
 --- Abandon the current test. Never returns.
 ---@param message string
-function support.fail(message)
+local function fail(message)
   error({ deadcode_test_failure = true, message = message }, 0)
 end
 
@@ -148,7 +148,7 @@ end
 ---@param context string|nil prefixed to the failure message
 function support.assert_equal(actual, expected, context)
   if actual ~= expected then
-    support.fail(
+    fail(
       string.format(
         '%sexpected %s\n  got      %s',
         context and (context .. ': ') or '',
@@ -173,7 +173,7 @@ function support.assert_list_equal(actual, expected, context)
     end
   end
   if not same then
-    support.fail(
+    fail(
       string.format(
         '%sexpected %s\n  got      %s',
         context and (context .. ': ') or '',
@@ -189,7 +189,7 @@ end
 ---@param context string|nil prefixed to the failure message
 function support.assert_contains(haystack, needle, context)
   if not tostring(haystack or ''):find(needle, 1, true) then
-    support.fail(
+    fail(
       string.format(
         '%sexpected output to contain %q\n  got      %s',
         context and (context .. ': ') or '',
@@ -203,7 +203,7 @@ end
 ---@param value any
 ---@param context string|nil prefixed to the failure message
 function support.assert_true(value, context)
-  if not value then support.fail((context or 'assertion') .. ': expected a truthy value') end
+  if not value then fail((context or 'assertion') .. ': expected a truthy value') end
 end
 
 --- Assert the tool finds nothing in the given project.

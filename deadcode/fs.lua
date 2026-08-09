@@ -9,6 +9,11 @@
 --- The filesystem interface the analyser is given. The real implementation is
 --- this module; the test suite passes a table of the same shape backed by an
 --- in-memory tree, so anything typed as `deadcode.FS` must accept either.
+--
+-- Because of that, every caller reads these fields off an `fs` *parameter*, and
+-- no static reader can tie that parameter back to this file. The fields below
+-- carry `privata: ignore` for exactly that reason - they are the interface, not
+-- drift.
 ---@class deadcode.FS
 local fs = {}
 
@@ -22,7 +27,7 @@ end
 --- Strip the `./` prefix so reported paths match what the user typed.
 ---@param path string
 ---@return string
-function fs.normalise(path)
+function fs.normalise(path) -- privata: ignore
   local normalised = tostring(path):gsub('\\', '/')
   while normalised:sub(1, 2) == './' do
     normalised = normalised:sub(3)
@@ -34,7 +39,7 @@ end
 ---@param path string
 ---@return string|nil content nil when the file could not be read
 ---@return string|nil err the reason, set only when `content` is nil
-function fs.read_file(path)
+function fs.read_file(path) -- privata: ignore
   local handle, err = io.open(path, 'rb')
   if not handle then return nil, err or ('could not open ' .. tostring(path)) end
   local content = handle:read('*a')
@@ -50,7 +55,7 @@ end
 ---@param path string
 ---@return string[]|nil files nil when `path` could not be inspected
 ---@return string|nil err the reason, set only when `files` is nil
-function fs.list_lua_files(path)
+function fs.list_lua_files(path) -- privata: ignore
   if not io.popen then return nil, 'io.popen is unavailable; cannot walk directories' end
 
   local command =
@@ -74,7 +79,7 @@ end
 --- Whether `path` names an existing file or directory.
 ---@param path string
 ---@return boolean
-function fs.exists(path)
+function fs.exists(path) -- privata: ignore
   local handle = io.open(path, 'r')
   if handle then
     handle:close()

@@ -17,7 +17,9 @@ local noqa = require('deadcode.noqa')
 ---@return deadcode.CodeItem[] items sorted by `CodeItem.compare`
 ---@return string[] diagnostics messages for the user; `Error:` prefixed ones
 --- are fatal to the exit status but never to the run
-return function(filenames, args, fs)
+-- One module, one verb, one exported function - so there is no module table to
+-- read fields off, and nothing here to narrow.
+return function(filenames, args, fs) -- privata: ignore
   local program = Resolver.new_program()
   local directives_by_file = {}
   local muted_files = {}

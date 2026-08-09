@@ -13,7 +13,9 @@ local ignore = require('deadcode.ignore')
 ---@return string[] files sorted and de-duplicated
 ---@return string[] diagnostics messages for the user; `Error:` prefixed ones
 --- are fatal to the exit status but never to the run
-return function(args, fs)
+-- One module, one verb, one exported function - so there is no module table to
+-- read fields off, and nothing here to narrow.
+return function(args, fs) -- privata: ignore
   local files, diagnostics, seen = {}, {}, {}
 
   for _, raw_path in ipairs(args.paths) do

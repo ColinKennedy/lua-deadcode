@@ -36,11 +36,10 @@ local constants = require('deadcode.constants')
 
 --- Command-line and configuration-file parsing.
 ---@class deadcode.Args.Module
----@field CONFIG_FILENAME string
 ---@field USAGE string
 local Args = {}
 
-Args.CONFIG_FILENAME = '.deadcoderc'
+local CONFIG_FILENAME = '.deadcoderc'
 
 local LIST_OPTIONS = {
   exclude = true,
@@ -141,7 +140,7 @@ end
 ---@param argv string[]|nil defaults to an empty list
 ---@return deadcode.Args|nil args nil when `argv` could not be parsed
 ---@return string|nil err set only when `args` is nil
-function Args.parse(argv)
+function Args._parse(argv)
   local args = new_defaults()
   local explicit = {}
   argv = argv or {}
@@ -226,7 +225,7 @@ end
 ---@param path string
 ---@return table<string, any>|nil config nil when the file is absent or bad
 ---@return string|nil err nil when the file was merely absent
-function Args.load_config(path)
+function Args._load_config(path)
   local handle = io.open(path, 'r')
   if not handle then return nil, nil end
   local source = handle:read('*a')
@@ -247,7 +246,7 @@ end
 ---@param config table<string, any>|nil nil leaves `args` untouched
 ---@return deadcode.Args|nil args nil when the config names an unknown option
 ---@return string|nil err set only when `args` is nil
-function Args.merge_config(args, config)
+function Args._merge_config(args, config)
   if not config then return args end
 
   for raw_key, value in pairs(config) do
@@ -282,18 +281,18 @@ end
 ---@return deadcode.Args|nil args nil when anything could not be resolved
 ---@return string|nil err set only when `args` is nil
 function Args.resolve(argv)
-  local args, err = Args.parse(argv)
+  local args, err = Args._parse(argv)
   if not args then return nil, err end
   if args.help or args.version then return args end
 
   if not args.no_config then
-    local path = args.config or Args.CONFIG_FILENAME
-    local config, config_err = Args.load_config(path)
+    local path = args.config or CONFIG_FILENAME
+    local config, config_err = Args._load_config(path)
     if config_err then return nil, config_err end
     if not config and args.config then
       return nil, string.format('config file %s could not be found', args.config)
     end
-    local merged, merge_err = Args.merge_config(args, config)
+    local merged, merge_err = Args._merge_config(args, config)
     if not merged then return nil, merge_err end
     args = merged
   end

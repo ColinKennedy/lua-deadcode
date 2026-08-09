@@ -13,14 +13,11 @@ local report = require('deadcode.actions.report')
 
 --- Entry point.
 ---@class deadcode.cli
----@field EXIT_OK integer
----@field EXIT_FINDINGS integer
----@field EXIT_ERROR integer
 local cli = {}
 
-cli.EXIT_OK = 0
-cli.EXIT_FINDINGS = 1
-cli.EXIT_ERROR = 2
+local EXIT_OK = 0
+local EXIT_FINDINGS = 1
+local EXIT_ERROR = 2
 
 --- Diagnostics carry their severity in their text, so that the collectors can
 --- append to one list without also threading a severity through.
@@ -45,10 +42,10 @@ function cli.main(argv, deps)
   local fs = deps.fs or default_fs
 
   local args, err = Args.resolve(argv)
-  if not args then return 'Error: ' .. err, cli.EXIT_ERROR end
-  if args.help then return Args.USAGE, cli.EXIT_OK end
-  if args.version then return constants.VERSION, cli.EXIT_OK end
-  if #args.paths == 0 then return 'Error: no paths given\n\n' .. Args.USAGE, cli.EXIT_ERROR end
+  if not args then return 'Error: ' .. err, EXIT_ERROR end
+  if args.help then return Args.USAGE, EXIT_OK end
+  if args.version then return constants.VERSION, EXIT_OK end
+  if #args.paths == 0 then return 'Error: no paths given\n\n' .. Args.USAGE, EXIT_ERROR end
 
   local files, discovery_diagnostics = find_lua_files(args, fs)
   local items, analysis_diagnostics = find_unused_names(files, args, fs)
@@ -77,11 +74,11 @@ function cli.main(argv, deps)
     if clear then chunks[#chunks + 1] = clear end
   end
 
-  local exit_code = cli.EXIT_OK
+  local exit_code = EXIT_OK
   if #items > 0 then
-    exit_code = cli.EXIT_FINDINGS
+    exit_code = EXIT_FINDINGS
   elseif had_error then
-    exit_code = cli.EXIT_ERROR
+    exit_code = EXIT_ERROR
   end
 
   local output = #chunks > 0 and table.concat(chunks, '\n') or nil
@@ -89,9 +86,12 @@ function cli.main(argv, deps)
 end
 
 --- Print the result of `main` and return the exit code.
+--
+-- `bin/deadcode` is the only caller, and it has no `.lua` extension, so a
+-- source scanner walking the tree never sees the read.
 ---@param argv string[]|nil
 ---@return integer exit_code
-function cli.run(argv)
+function cli.run(argv) -- privata: ignore
   local output, exit_code = cli.main(argv)
   if output and output ~= '' then io.stdout:write(output, '\n') end
   return exit_code
