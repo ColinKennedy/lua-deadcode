@@ -19,6 +19,19 @@ local EXIT_OK = 0
 local EXIT_FINDINGS = 1
 local EXIT_ERROR = 2
 
+-- The one place the real filesystem is chosen, written out field by field
+-- rather than handed over as a bare table. `deadcode.FS` is otherwise only ever
+-- reached through a parameter, so this is what states - to a reader and to a
+-- static scan alike - which module actually satisfies the interface, and which
+-- of its functions are part of it.
+---@type deadcode.FS
+local REAL_FS = {
+  normalise = default_fs.normalise,
+  read_file = default_fs.read_file,
+  list_lua_files = default_fs.list_lua_files,
+  exists = default_fs.exists,
+}
+
 --- Diagnostics carry their severity in their text, so that the collectors can
 --- append to one list without also threading a severity through.
 ---@param diagnostic string
@@ -39,7 +52,7 @@ end
 ---@return integer exit_code one of the `EXIT_` constants
 function cli.main(argv, deps)
   deps = deps or {}
-  local fs = deps.fs or default_fs
+  local fs = deps.fs or REAL_FS
 
   local args, err = Args.resolve(argv)
   if not args then return 'Error: ' .. err, EXIT_ERROR end
