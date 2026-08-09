@@ -3,8 +3,8 @@
 -- Every read the analyser performs goes through here, so the test suite can
 -- swap in a virtual file tree and never touch disk. That is the single most
 -- useful thing the Python original's test harness does, and it is worth more
--- here than an `lfs` dependency would be: no LuaRocks install is required to
--- run this tool or its tests.
+-- here than an `lfs` dependency would be: the rock pulls in nothing but Lua
+-- itself, and the tests run against a bare interpreter.
 
 --- The filesystem interface the analyser is given. The real implementation is
 --- this module; the test suite passes a table of the same shape backed by an

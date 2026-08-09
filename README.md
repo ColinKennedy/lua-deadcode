@@ -10,21 +10,32 @@ src/format.lua:12:12:  DC05 Field `legacy_mode` is never used
 src/format.lua:57:1:   DC10 Branch is never taken (`if` is constant)
 ```
 
-Requires Lua 5.1 or newer, or LuaJIT. No dependencies, no LuaRocks, no
+Requires Lua 5.1 or newer, or LuaJIT. No runtime dependencies — not even
 LuaFileSystem. Parses the full Lua 5.1–5.4 and LuaJIT grammar, so it can analyse
 modern code whatever it runs on itself.
 
 ## Install
 
-Clone it and run the script; there is nothing to build.
+```sh
+luarocks install deadcode
+```
+
+That puts a `deadcode` command on your `PATH`:
 
 ```sh
-git clone <this repo> && cd lua-deadcode
+deadcode path/to/your/project
+```
+
+Or run it straight from a clone — there is nothing to build, since the only
+dependency is Lua itself:
+
+```sh
+git clone https://github.com/ColinKennedy/lua-deadcode && cd lua-deadcode
 ./bin/deadcode path/to/your/project
 ```
 
-Symlink `bin/deadcode` onto your `PATH` if you want it everywhere. It resolves
-its own modules relative to the real script location.
+Symlink `bin/deadcode` onto your `PATH` if you want that copy everywhere. It
+resolves its own modules relative to the real script location.
 
 ## Usage
 
