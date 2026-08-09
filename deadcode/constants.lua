@@ -25,6 +25,7 @@
 ---| '"dead_branch"'
 ---| '"empty_file"'
 ---| '"label"'
+---| '"unused_ignore"'
 
 --- One row of the code table: a finding kind and everything derived from it.
 ---@class deadcode.CodeSpec
@@ -37,6 +38,7 @@
 --- Finding kinds and the lookup tables derived from them.
 ---@class deadcode.constants
 ---@field VERSION string
+---@field UNUSED_IGNORE_MESSAGE string
 ---@field CODES deadcode.CodeSpec[]
 ---@field TYPE_TO_CODE table<deadcode.FindingType, string>
 ---@field MESSAGE_FOR_TYPE table<deadcode.FindingType, string>
@@ -129,7 +131,21 @@ constants.CODES = {
     exact = true,
     message = 'Label `%s` is never used',
   },
+  {
+    type = 'unused_ignore',
+    code = 'DC13',
+    name = 'unused-ignore',
+    exact = true,
+    message = 'Ignore of `%s` suppresses nothing; remove it',
+  },
 }
+
+-- `unused_ignore` is the one kind whose sentence depends on the shape of the
+-- finding rather than only on its name: a directive that listed codes can say
+-- which of them went unused, a bare one has no name to report. The row above
+-- carries the first wording and this carries the second, so both still live
+-- here rather than drifting into the code that builds the finding.
+constants.UNUSED_IGNORE_MESSAGE = 'Ignore comment suppresses nothing; remove it'
 
 constants.TYPE_TO_CODE = {}
 constants.MESSAGE_FOR_TYPE = {}
