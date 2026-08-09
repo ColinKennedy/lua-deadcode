@@ -10,6 +10,39 @@
 -- literal keys and read by dynamic lookup looks exactly like dead code from
 -- the outside, because that is all a static reader can see.
 
+--- The kind of thing a finding is about. Every value here has a row in
+--- `constants.CODES`, and the two must stay in step.
+---@alias deadcode.FindingType
+---| '"variable"'
+---| '"function"'
+---| '"global"'
+---| '"method"'
+---| '"field"'
+---| '"parameter"'
+---| '"require"'
+---| '"loop_variable"'
+---| '"unreachable"'
+---| '"dead_branch"'
+---| '"empty_file"'
+---| '"label"'
+---| '"unused_ignore"'
+
+--- One row of the code table: a finding kind and everything derived from it.
+---@class deadcode.CodeSpec
+---@field type deadcode.FindingType the kind this row describes
+---@field code string the stable `DCxx` identifier
+---@field name string the human-readable rule name, as used in configuration
+---@field exact boolean|nil true when lexical scoping resolved the name
+---@field message string `string.format` template taking the name, if any
+
+--- Finding kinds and the lookup tables derived from them.
+---@class deadcode.constants
+---@field VERSION string
+---@field UNUSED_IGNORE_MESSAGE string
+---@field CODES deadcode.CodeSpec[]
+---@field TYPE_TO_CODE table<deadcode.FindingType, string>
+---@field MESSAGE_FOR_TYPE table<deadcode.FindingType, string>
+---@field EXACT_TYPES table<deadcode.FindingType, boolean>
 local constants = {}
 
 constants.VERSION = '0.1.0'
@@ -98,7 +131,21 @@ constants.CODES = {
     exact = true,
     message = 'Label `%s` is never used',
   },
+  {
+    type = 'unused_ignore',
+    code = 'DC13',
+    name = 'unused-ignore',
+    exact = true,
+    message = 'Ignore of `%s` suppresses nothing; remove it',
+  },
 }
+
+-- `unused_ignore` is the one kind whose sentence depends on the shape of the
+-- finding rather than only on its name: a directive that listed codes can say
+-- which of them went unused, a bare one has no name to report. The row above
+-- carries the first wording and this carries the second, so both still live
+-- here rather than drifting into the code that builds the finding.
+constants.UNUSED_IGNORE_MESSAGE = 'Ignore comment suppresses nothing; remove it'
 
 constants.TYPE_TO_CODE = {}
 constants.MESSAGE_FOR_TYPE = {}

@@ -10,21 +10,32 @@ src/format.lua:12:12:  DC05 Field `legacy_mode` is never used
 src/format.lua:57:1:   DC10 Branch is never taken (`if` is constant)
 ```
 
-Requires Lua 5.1 or newer, or LuaJIT. No dependencies, no LuaRocks, no
+Requires Lua 5.1 or newer, or LuaJIT. No runtime dependencies — not even
 LuaFileSystem. Parses the full Lua 5.1–5.4 and LuaJIT grammar, so it can analyse
 modern code whatever it runs on itself.
 
 ## Install
 
-Clone it and run the script; there is nothing to build.
+```sh
+luarocks install deadcode
+```
+
+That puts a `deadcode` command on your `PATH`:
 
 ```sh
-git clone <this repo> && cd lua-deadcode
+deadcode path/to/your/project
+```
+
+Or run it straight from a clone — there is nothing to build, since the only
+dependency is Lua itself:
+
+```sh
+git clone https://github.com/ColinKennedy/lua-deadcode && cd lua-deadcode
 ./bin/deadcode path/to/your/project
 ```
 
-Symlink `bin/deadcode` onto your `PATH` if you want it everywhere. It resolves
-its own modules relative to the real script location.
+Symlink `bin/deadcode` onto your `PATH` if you want that copy everywhere. It
+resolves its own modules relative to the real script location.
 
 ## Usage
 
@@ -55,7 +66,7 @@ pre-commit hook.
 | `DC02` | unused-function       | `local function f` that is never called |
 | `DC03` | unused-global         | a global this codebase assigns but never reads |
 | `DC04` | unused-method         | `function T:m()` never invoked |
-| `DC05` | unused-field          | `function T.f()`, `T.f = ...`, `local T = { f = ... }` |
+| `DC05` | unused-field          | `function T.f()`, `T.f = ...`, `local T = { f = ... }`, where `T` is a table this codebase owns |
 | `DC06` | unused-parameter      | a parameter never read (opt-in, `--check-params`) |
 | `DC07` | unused-require        | `local m = require "x"` where `m` is never used |
 | `DC08` | unused-loop-variable  | a `for` control variable never read |
@@ -63,6 +74,7 @@ pre-commit hook.
 | `DC10` | unreachable-branch    | `if false`, `while false`, a branch after `if true` |
 | `DC11` | empty-file            | a file with no statements |
 | `DC12` | unused-label          | `::label::` that no `goto` targets |
+| `DC13` | unused-ignore         | a `deadcode: ignore` comment that suppresses nothing |
 
 Assignment is not use: `local x; x = 5` still reports `x`. Neither is
 self-recursion — a function whose only caller is itself is dead, and saying so
@@ -91,18 +103,49 @@ bucket and a use of any marks all of them used. That under-reports; it never
 over-reports. Analysis is whole-program, so a field defined in one module and
 only read from another is correctly live.
 
+**A field finding is only ever made about a table this codebase owns.** Writing
+`t.k = v` says nothing about `k` unless `t` is a table built here and still kept
+here — otherwise the reader lives somewhere this tool cannot look, and calling
+the field dead is a claim about *their* code:
+
+```lua
+local M = {}
+M.helper = function() end        -- ours: reported if nothing calls it
+
+vim.opt_local.number = false     -- the editor reads these back
+vim.bo[buffer].bufhidden = "wipe"
+local other = require("other")
+other.extra = 1                  -- not our table to reason about
+
+local opts = { silent = true }   -- ours, until it is handed over...
+vim.keymap.set("n", "x", print, opts)   -- ...and now the callee reads it
+
+local STEPS = { next = 1 }
+return STEPS[direction]          -- a computed key can name any field
+```
+
+A table stops being provable the moment it is passed to a call, stored in a
+table we do not own, or read with a computed key. `setmetatable(M, mt)` is
+excluded: it hands the table to the VM, not to a reader, and the class idiom
+depends on it. *Writing through* a global counts as foreign, because nothing
+distinguishes a global table of yours from `vim` or `string` — though a
+constructor you can see (`config = { verbose = true }`) is still yours.
+
 Truthiness follows Lua, not intuition borrowed from other languages: only `nil`
 and `false` are falsy, so `if 0 then` and `if "" then` are live branches.
 
 ## Suppression
 
-Inline, using whichever spelling you already type:
+`-- deadcode: ignore` silences an individual finding. Name codes after it to
+silence only those; with none listed, every finding on the line goes quiet. Two
+spellings you may already type are accepted as exact equivalents:
 
 ```lua
 local x = 1   -- deadcode: ignore
-local y = 2   -- deadcode: ignore DC01, DC02
-local z = 3   -- luacheck: ignore
-local w = 4   -- noqa: DC01
+local y = 2   -- deadcode: ignore DC01
+local z = 3   -- deadcode: ignore DC01, DC02
+local w = 4   -- luacheck: ignore
+local v = 5   -- noqa: DC01
 ```
 
 A trailing comment governs its own line; a comment on a line of its own governs
@@ -118,6 +161,52 @@ To mute a whole file while still letting it count as a *user* of other code:
 Names starting with `_` are never reported, and neither is the implicit `self`
 of a method. Metamethods (`__index`, `__tostring`, …) are never reported: the
 VM calls them, so no static reader can ever see them used.
+
+### Ignores that stopped mattering (`DC13`)
+
+A suppression comment outlives the code it was written for. Rename the variable,
+delete the branch, finally use the field — and the comment stays, silencing a
+finding that no longer exists. Nothing else in a codebase ever prompts you to
+remove one.
+
+So the check runs both ways: a `deadcode: ignore` that suppressed nothing is
+itself reported.
+
+```
+$ deadcode src
+src/parser.lua:41:16: DC13 Ignore comment suppresses nothing; remove it
+src/format.lua:12:22: DC13 Ignore of `DC05` suppresses nothing; remove it
+```
+
+The finding points at the comment — the line you would delete — not at the code
+it was governing. Listing several codes reports each one separately, so
+`-- deadcode: ignore DC01, DC07` on a line that only ever had a `DC01` names the
+`DC07` and leaves the rest of the comment alone.
+
+Three deliberate limits:
+
+- **Only this tool's own spelling is reported.** A `luacheck: ignore` or a bare
+  `noqa:` may well be earning its keep in a linter this one cannot see, so
+  advising you to delete it would be a claim about someone else's tool.
+- **A directive cannot excuse itself.** `-- deadcode: ignore` on a line whose
+  only finding is that very comment is still reported; otherwise every stale
+  directive would justify its own existence. A *neighbouring* directive can
+  excuse it, which is the escape hatch for a comment you want to keep through a
+  change that has not landed yet:
+
+  ```lua
+  -- deadcode: ignore DC13
+  print(value)  -- deadcode: ignore DC01
+  ```
+
+  The inner directive is suppressing nothing — that is the point — and the
+  outer one says to leave it be. Neither is reported.
+
+- **A muted file is left alone.** `-- deadcode: ignore-file` already said
+  nothing in the file is being listened to.
+
+Turn the check off with `--ignore-codes DC13`, or `ignore_codes = { 'DC13' }` in
+`.deadcoderc`.
 
 ### `--exclude` versus `--ignore-names-in-files`
 
@@ -163,8 +252,13 @@ eventually ignore.
 - **Mutual recursion is invisible.** `a` calls `b`, `b` calls `a`, nothing calls
   either — both look used. Direct self-recursion *is* caught.
 - **Dynamic access defeats it in both directions.** `t[key]` with a computed key
-  is neither a use nor a definition. Dispatch tables, `_G`, `setmetatable`
-  trickery and `load()` are all invisible. A literal `t["name"]` *is* understood.
+  is neither a use nor a definition — and it retires every finding about `t`,
+  since a computed key could name any of them. `_G`, `setmetatable` trickery and
+  `load()` are equally invisible. A literal `t["name"]` *is* understood.
+- **A table you hand over is a table you stop hearing about.** Passing it to a
+  call or storing it in a table you do not own withdraws its field findings, and
+  no attempt is made to see whether the callee actually reads anything. Dead
+  fields on your options tables will not be found.
 - **A table only ever written to looks live**, because writing `t.a.b = 1` reads
   `t.a` on the way.
 - **Removing dead code can reveal more.** Nothing chases that cascade; run the
@@ -179,7 +273,7 @@ eventually ignore.
 
 ```sh
 make check      # test suite + self-check
-make test       # 129 tests, no dependencies
+make test       # 158 tests, no dependencies
 make test-jit   # the same suite under LuaJIT
 make deadcode   # run the tool against its own source
 
@@ -207,7 +301,7 @@ deadcode/lexer.lua        tokeniser (Lua 5.1-5.4, LuaJIT)
 deadcode/parser.lua       recursive-descent parser -> AST
 deadcode/resolver.lua     scope resolution and use collection
 deadcode/ignore.lua       every reason a finding is dropped, in one predicate
-deadcode/noqa.lua         inline directive parsing
+deadcode/noqa.lua         inline directive parsing, and whether each one worked
 deadcode/constants.lua    codes and messages, one source of truth
 deadcode/code_item.lua    a single finding
 deadcode/args.lua         CLI and .deadcoderc
@@ -239,5 +333,5 @@ where Lua differs:
 - **config as a Lua file** rather than TOML.
 
 > Note on licensing: the Python original is AGPLv3. No code was copied, but the
-> code numbering and flag names are deliberately familiar. No licence has been
-> chosen for this repository yet — that is a decision for its owner.
+> code numbering and flag names are deliberately familiar. This repository is
+> MIT licensed; see `LICENSE`.

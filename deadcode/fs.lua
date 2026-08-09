@@ -3,17 +3,32 @@
 -- Every read the analyser performs goes through here, so the test suite can
 -- swap in a virtual file tree and never touch disk. That is the single most
 -- useful thing the Python original's test harness does, and it is worth more
--- here than an `lfs` dependency would be: no LuaRocks install is required to
--- run this tool or its tests.
+-- here than an `lfs` dependency would be: the rock pulls in nothing but Lua
+-- itself, and the tests run against a bare interpreter.
 
+--- The filesystem interface the analyser is given. The real implementation is
+--- this module; the test suite passes a table of the same shape backed by an
+--- in-memory tree, so anything typed as `deadcode.FS` must accept either.
+---
+--- The members are spelled out because the interface is the contract between
+--- two implementations, and a caller only ever sees it as an `fs` parameter.
+---@class deadcode.FS
+---@field normalise fun(path: string): string
+---@field read_file fun(path: string): string|nil, string|nil
+---@field list_lua_files fun(path: string): string[]|nil, string|nil
+---@field exists fun(path: string): boolean
 local fs = {}
 
 --- Single-quote a path for /bin/sh.
+---@param path string
+---@return string the quoted path, safe to interpolate into a command
 local function shell_quote(path)
   return "'" .. tostring(path):gsub("'", "'\\''") .. "'"
 end
 
 --- Strip the `./` prefix so reported paths match what the user typed.
+---@param path string
+---@return string
 function fs.normalise(path)
   local normalised = tostring(path):gsub('\\', '/')
   while normalised:sub(1, 2) == './' do
@@ -22,6 +37,10 @@ function fs.normalise(path)
   return normalised
 end
 
+--- Read a whole file.
+---@param path string
+---@return string|nil content nil when the file could not be read
+---@return string|nil err the reason, set only when `content` is nil
 function fs.read_file(path)
   local handle, err = io.open(path, 'rb')
   if not handle then return nil, err or ('could not open ' .. tostring(path)) end
@@ -35,6 +54,9 @@ end
 --
 -- Uses `find` rather than LuaFileSystem to stay dependency-free. Returns
 -- `files, err`; a nil `files` means the path could not be inspected at all.
+---@param path string
+---@return string[]|nil files nil when `path` could not be inspected
+---@return string|nil err the reason, set only when `files` is nil
 function fs.list_lua_files(path)
   if not io.popen then return nil, 'io.popen is unavailable; cannot walk directories' end
 
@@ -56,6 +78,9 @@ function fs.list_lua_files(path)
   return files
 end
 
+--- Whether `path` names an existing file or directory.
+---@param path string
+---@return boolean
 function fs.exists(path)
   local handle = io.open(path, 'r')
   if handle then

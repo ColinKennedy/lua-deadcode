@@ -144,7 +144,7 @@ return {
     )
     assert_contains(coloured, '\27[', 'expected ANSI escapes by default')
 
-    local plain = run({ ['a.lua'] = 'local x = 1\n' })
+    local plain = assert(run({ ['a.lua'] = 'local x = 1\n' }))
     assert_equal(plain:find('\27', 1, true), nil, 'expected no escapes with --no-color')
   end,
 

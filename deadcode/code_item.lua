@@ -6,11 +6,32 @@
 
 local constants = require('deadcode.constants')
 
+--- A single dead-code finding, ready to be reported.
+---@class deadcode.CodeItem
+---@field name string the offending name, or '' where the finding has none
+---@field type deadcode.FindingType
+---@field code string the `DCxx` code derived from `type`
+---@field file string path as the user typed it
+---@field line integer 1-based; 0 when the finding has no position
+---@field col integer 1-based; 0 when the finding has no position
+---@field message string|nil overrides the template for `type` when set
+---@field exact boolean true when lexical scoping, not name matching, found it
 local CodeItem = {}
 CodeItem.__index = CodeItem
 
+--- Everything `CodeItem.new` accepts. Only `name`, `type` and `file` are
+--- required; a finding with no meaningful position leaves `line` and `col` out.
+---@class deadcode.CodeItem.Opts
+---@field name string
+---@field type deadcode.FindingType
+---@field file string
+---@field line integer|nil defaults to 0
+---@field col integer|nil defaults to 0
+---@field message string|nil
+
 --- Create a finding.
--- @param opts table with: name, type, file, line, col, and optional message
+---@param opts deadcode.CodeItem.Opts
+---@return deadcode.CodeItem
 function CodeItem.new(opts)
   local code = constants.TYPE_TO_CODE[opts.type]
   assert(code, 'unknown finding type: ' .. tostring(opts.type))
@@ -27,10 +48,18 @@ function CodeItem.new(opts)
   }, CodeItem)
 end
 
+--- The `file:line:col:` prefix a report line opens with.
+--
+-- Reached as `item:position()` on an instance, never as `CodeItem.position`,
+-- which is invisible to a scanner that matches reads by receiver.
+---@return string
 function CodeItem:position()
   return string.format('%s:%d:%d:', self.file, self.line, self.col)
 end
 
+--- The human-readable sentence describing this finding.
+-- Reached as `item:text()`; see the note on `position`.
+---@return string
 function CodeItem:text()
   if self.message then return self.message end
   local template = constants.MESSAGE_FOR_TYPE[self.type]
@@ -39,6 +68,9 @@ function CodeItem:text()
 end
 
 --- Stable ordering for reports: by file, then line, then column, then code.
+---@param a deadcode.CodeItem
+---@param b deadcode.CodeItem
+---@return boolean `true` when `a` sorts before `b`
 function CodeItem.compare(a, b)
   if a.file ~= b.file then return a.file < b.file end
   if a.line ~= b.line then return a.line < b.line end

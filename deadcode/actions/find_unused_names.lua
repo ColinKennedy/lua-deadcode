@@ -7,10 +7,19 @@
 local Parser = require('deadcode.parser')
 local Resolver = require('deadcode.resolver')
 local CodeItem = require('deadcode.code_item')
+local constants = require('deadcode.constants')
 local ignore = require('deadcode.ignore')
 local noqa = require('deadcode.noqa')
 
---- @return items (sorted findings), diagnostics (list of strings)
+--- Analyse every file and return what is left unused.
+---@param filenames string[]
+---@param args deadcode.Args
+---@param fs deadcode.FS
+---@return deadcode.CodeItem[] items sorted by `CodeItem.compare`
+---@return string[] diagnostics messages for the user; `Error:` prefixed ones
+--- are fatal to the exit status but never to the run
+-- One module, one verb, one exported function - so there is no module table to
+-- read fields off, and nothing here to narrow.
 return function(filenames, args, fs)
   local program = Resolver.new_program()
   local directives_by_file = {}
@@ -31,6 +40,7 @@ return function(filenames, args, fs)
         diagnostics[#diagnostics + 1] =
           string.format('Error: failed to parse %s, ignoring it (%s)', file, tostring(comments))
       else
+        ---@cast comments deadcode.Comment[] the error message is the other case
         local directives = noqa.parse(comments)
         directives_by_file[file] = directives
 
@@ -68,6 +78,38 @@ return function(filenames, args, fs)
     if not skip and #args.only > 0 then skip = not ignore.matches_path(item.file, args.only) end
 
     if not skip then items[#items + 1] = item end
+  end
+
+  -- Only now, with every finding filtered, is it known which directives did any
+  -- work. One that did none is reported in its turn, so suppression comments do
+  -- not quietly outlive the code they were written for.
+  --
+  -- Iteration order over files is arbitrary; the sort below is what makes the
+  -- report deterministic, exactly as it does for everything above.
+  for file, directives in pairs(directives_by_file) do
+    if not muted_files[file] then
+      for _, unused in ipairs(noqa.unused(directives)) do
+        local item = CodeItem.new({
+          name = unused.code or '',
+          type = 'unused_ignore',
+          file = file,
+          line = unused.line,
+          col = unused.col,
+          message = not unused.code and constants.UNUSED_IGNORE_MESSAGE or nil,
+        })
+
+        -- `by_kind` has nothing to say about a directive, and the file is known
+        -- not to be muted, so this is the rest of the same chain. The directive
+        -- under complaint is excluded from suppressing its own complaint.
+        local skip = ignored_codes[item.code]
+          or ignore.by_config(item, args)
+          or noqa.is_ignored(directives, item.line, item.code, unused.directive)
+
+        if not skip and #args.only > 0 then skip = not ignore.matches_path(item.file, args.only) end
+
+        if not skip then items[#items + 1] = item end
+      end
+    end
   end
 
   table.sort(items, CodeItem.compare)

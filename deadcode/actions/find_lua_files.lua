@@ -7,7 +7,14 @@
 
 local ignore = require('deadcode.ignore')
 
---- @return files (sorted, de-duplicated), diagnostics (list of strings)
+--- Expand `args.paths` into the files to analyse.
+---@param args deadcode.Args
+---@param fs deadcode.FS
+---@return string[] files sorted and de-duplicated
+---@return string[] diagnostics messages for the user; `Error:` prefixed ones
+--- are fatal to the exit status but never to the run
+-- One module, one verb, one exported function - so there is no module table to
+-- read fields off, and nothing here to narrow.
 return function(args, fs)
   local files, diagnostics, seen = {}, {}, {}
 

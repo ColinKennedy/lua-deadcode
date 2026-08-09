@@ -6,6 +6,8 @@ return {
   test_roots = { 'tests' },
   exclude = { 'examples' },
 
-  -- The CLI wrapper is run by the shell, not required by any module.
-  entrypoint_globs = { 'bin/*' },
+  -- `bin/deadcode` is run by the shell and has no extension, so privata never
+  -- parses it and never sees the `cli.run(arg)` inside it. The module it drives
+  -- is the interface, so name the module rather than chase the caller.
+  entrypoint_modules = { 'deadcode.cli' },
 }
